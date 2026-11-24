@@ -8,7 +8,7 @@
 //! `XCL_ASYNC_PSO=0` builds every pipeline in the call, as before.
 
 use std::collections::HashMap;
-use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
 use std::sync::{mpsc, Arc, Condvar, Mutex, OnceLock};
 
 struct Pending {
@@ -568,6 +568,37 @@ fn wait_budget() -> Option<std::time::Duration> {
     *B.get_or_init(|| std::env::var("XCL_PSO_WAIT_MS").ok().and_then(|v| v.trim().parse::<u64>().ok()).filter(|&ms| ms > 0).map(std::time::Duration::from_millis))
 }
 
+/// After a pipeline went late, the builds are behind: for `COOLDOWN` every further wait (on
+/// any thread) is cut to `SHORT_WAIT`. A title that binds many new pipelines in a row otherwise
+/// waits the whole budget for each in turn – back to back, its threads make no progress and its
+/// watchdog ends it anyway (an RX 6600 XT: a 4000 ms wait timed out about every 4 s on three
+/// title threads, "GPU Loc Sig" at 404 s; with this cooldown the same title reached its world).
+const COOLDOWN: std::time::Duration = std::time::Duration::from_secs(10);
+const SHORT_WAIT: std::time::Duration = std::time::Duration::from_millis(50);
+static LAST_LATE_MS: AtomicU64 = AtomicU64::new(0);
+
+fn now_ms() -> u64 {
+    static START: OnceLock<std::time::Instant> = OnceLock::new();
+    // +1: 0 means "none late yet"
+    START.get_or_init(std::time::Instant::now).elapsed().as_millis() as u64 + 1
+}
+
+fn note_late() {
+    LAST_LATE_MS.store(now_ms(), Ordering::Relaxed);
+}
+
+fn budget_after_lates(budget: std::time::Duration) -> std::time::Duration {
+    if std::env::var("XCL_PSO_WAIT_COOLDOWN").is_ok_and(|v| v.trim() == "0") {
+        return budget;
+    }
+    let last = LAST_LATE_MS.load(Ordering::Relaxed);
+    if last != 0 && now_ms().saturating_sub(last) < COOLDOWN.as_millis() as u64 {
+        budget.min(SHORT_WAIT)
+    } else {
+        budget
+    }
+}
+
 /// `resolve_wait` for at most `budget`: the build goes to the workers (not this thread), and a
 /// pipeline not built by then is `late` – it and later binds of it get the stand-in (their
 /// dispatches are skipped) until a worker has built it.
@@ -586,11 +617,13 @@ fn resolve_within(p: &Arc<Pending>, pso: usize, budget: std::time::Duration) -> 
         return pso;
     }
     p.want();
+    let budget = budget_after_lates(budget);
     let (done, _) = p.cv.wait_timeout_while(p.done.lock().unwrap(), budget, |d| !*d).unwrap();
     if *done {
         return built(p);
     }
     drop(done);
+    note_late();
     p.late.store(true, Ordering::Release);
     static N: AtomicUsize = AtomicUsize::new(0);
     let n = N.fetch_add(1, Ordering::Relaxed);

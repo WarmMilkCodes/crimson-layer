@@ -495,8 +495,13 @@ pub fn init() -> Result<String, String> {
                 &CLSID_D3D12DeviceRemovedExtendedData,
             ) {
                 Ok(d) => {
-                    d.SetAutoBreadcrumbsEnablement(D3D12_DRED_ENABLEMENT_FORCED_ON);
-                    d.SetPageFaultEnablement(D3D12_DRED_ENABLEMENT_FORCED_ON);
+                    // `XCL_DRED=breadcrumbs` / `=pagefault`: only that half (each costs differently;
+                    // a retail title stalled at start with both on)
+                    let mode = std::env::var("XCL_DRED").unwrap_or_default();
+                    let on = |x: bool| if x { D3D12_DRED_ENABLEMENT_FORCED_ON } else { D3D12_DRED_ENABLEMENT_FORCED_OFF };
+                    d.SetAutoBreadcrumbsEnablement(on(mode != "pagefault"));
+                    d.SetPageFaultEnablement(on(mode != "breadcrumbs"));
+                    crate::xlog_info!("D3D12: DRED on ({})", if mode == "breadcrumbs" || mode == "pagefault" { mode.as_str() } else { "breadcrumbs and page faults" });
                 }
                 Err(e) => {
                     crate::xlog_warn!("D3D12: DRED requested but unavailable: {e}");
