@@ -49,9 +49,18 @@ pub enum Part {
     StreamRecheck = 16,
     /// textures with written pages found and uploaded
     TexUpload = 17,
+    // the texture uploads, piece by piece
+    /// a texture's memory hashed: the same as at its last upload?
+    TexHash = 18,
+    /// the console's tiled texels put in rows
+    TexDetile = 19,
+    /// the copies recorded (texels into the upload buffer) and submitted
+    TexRecord = 20,
+    /// the CPU waits for the GPU to finish the copies
+    TexWait = 21,
 }
 
-const PARTS: usize = 18;
+const PARTS: usize = 22;
 pub const NAMES: [&str; PARTS] = [
     "submits",
     "driver in submits",
@@ -71,6 +80,10 @@ pub const NAMES: [&str; PARTS] = [
     "written pages to video memory",
     "unwatched textures",
     "texture uploads",
+    "texture hashing",
+    "texture detiling",
+    "texture copies recorded",
+    "CPU waits for texture copies",
 ];
 
 static NANOS: [AtomicU64; PARTS] = [const { AtomicU64::new(0) }; PARTS];

@@ -693,6 +693,46 @@ pub(super) unsafe fn refresh(queue: *mut c_void) {
     }
     let _refresh = REFRESH.lock().unwrap();
     own_work(|| refresh_once(queue));
+    wait_for_uploads(queue);
+}
+
+/// Crimson: `XCL_TEXTURE_UPLOAD_WAIT=gpu` – a texture upload does not hold the submitting thread
+/// until the GPU has copied (a retail game's world: some 30 uploads a second, 15 ms each, one
+/// after the other, where its frame has 16); the title's queues wait for the copies on the GPU
+/// instead (`wait_for_uploads`). Anything else: the CPU waits, as before.
+fn uploads_unwaited() -> bool {
+    static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *ON.get_or_init(|| {
+        let on = std::env::var("XCL_TEXTURE_UPLOAD_WAIT").is_ok_and(|v| v.trim().eq_ignore_ascii_case("gpu"));
+        if on {
+            crate::xlog_info!("title textures: uploads are not waited for on the CPU – the title's queues wait for them on the GPU (XCL_TEXTURE_UPLOAD_WAIT=gpu)");
+        }
+        on
+    })
+}
+
+/// upload queue → (its shared fence, the value it reaches when every upload so far is done)
+static UPLOADS_DUE: Mutex<BTreeMap<usize, (ID3D12Fence, u64)>> = Mutex::new(BTreeMap::new());
+/// (title queue, upload queue) → the value the title queue waits for already
+static UPLOADS_WAITED: Mutex<BTreeMap<(usize, usize), u64>> = Mutex::new(BTreeMap::new());
+static UPLOADS_UNWAITED: AtomicU64 = AtomicU64::new(0);
+
+/// Before the title's lists on `queue`: the queue waits (on the GPU) for the texture uploads
+/// nobody waited for on the CPU – every queue for every upload, whichever queue's submit
+/// found the texture written: any of them may draw with it next.
+unsafe fn wait_for_uploads(queue: *mut c_void) {
+    if UPLOADS_UNWAITED.load(Ordering::Relaxed) == 0 {
+        return;
+    }
+    let Some(q) = ID3D12CommandQueue::from_raw_borrowed(&queue) else { return };
+    let due: Vec<(usize, ID3D12Fence, u64)> = UPLOADS_DUE.lock().unwrap().iter().map(|(&k, (f, v))| (k, f.clone(), *v)).collect();
+    let mut waited = UPLOADS_WAITED.lock().unwrap();
+    for (upload_queue, fence, value) in due {
+        let seen = waited.entry((queue as usize, upload_queue)).or_insert(0);
+        if *seen < value && q.Wait(&fence, value).is_ok() {
+            *seen = value;
+        }
+    }
 }
 
 /// The pages of `[base, base + size)` written since the last look, added to `dirty` and reset
@@ -1104,6 +1144,7 @@ unsafe fn upload_all(todo: Vec<(ID3D12Resource, Upload)>) {
             // retail title's video planes and UI targets went up again for every submit, ~25 MB
             // a presented frame where ~3 MB had changed, and the submits waited here.
             if unchanged_skip() {
+                let _t = super::frametime::timed(super::frametime::Part::TexHash);
                 let h = content_hash(&title_bytes(va, tex.size() as usize));
                 if same_as_last_upload(r.as_raw() as usize, h) {
                     let n = UNCHANGED.fetch_add(1, Ordering::Relaxed) + 1;
@@ -1120,7 +1161,10 @@ unsafe fn upload_all(todo: Vec<(ID3D12Resource, Upload)>) {
         if picked.is_empty() {
             continue;
         }
-        let subs = subresources_of_all(&picked, bytes);
+        let subs = {
+            let _t = super::frametime::timed(super::frametime::Part::TexDetile);
+            subresources_of_all(&picked, bytes)
+        };
         let mut batch = Vec::with_capacity(picked.len());
         for ((r, va, _, states), subs) in picked.into_iter().zip(subs) {
             if super::present::trace_frame() {
@@ -1137,9 +1181,21 @@ unsafe fn upload_all(todo: Vec<(ID3D12Resource, Upload)>) {
                 continue;
             }
         };
+        let unwaited = uploads_unwaited();
         match own_work(|| {
             super::vram::before_execute(&queue);
-            texture::upload_batch(dev, &queue, &batch)
+            if !unwaited {
+                return texture::upload_batch(dev, &queue, &batch);
+            }
+            let (failed, due) = texture::upload_batch_unwaited(dev, &queue, &batch)?;
+            if let Some((fence, value)) = due {
+                UPLOADS_DUE.lock().unwrap().insert(queue.as_raw() as usize, (fence, value));
+                let n = UPLOADS_UNWAITED.fetch_add(1, Ordering::Relaxed) + 1;
+                if n == 1 || (n.is_power_of_two() && n >= 1024) {
+                    crate::xlog_info!("title textures: {n} upload batches so far that the CPU did not wait for");
+                }
+            }
+            Ok(failed)
         }) {
             Ok(failed) => {
                 for (_, e) in failed {

@@ -268,11 +268,91 @@ impl Uploader {
 /// order). A failure of one is returned with its index; the others still run. The texels go
 /// through the queue's kept upload buffer (`Uploader`).
 pub unsafe fn upload_batch(dev: &ID3D12Device, queue: &ID3D12CommandQueue, items: &[(ID3D12Resource, Vec<Subresource>, Vec<D3D12_RESOURCE_STATES>)]) -> Result<Vec<(usize, String)>, String> {
+    upload_batch_on(dev, queue, items, false).map(|(failed, _)| failed)
+}
+
+/// Crimson: what the batches of one queue that nobody waits for on the CPU share
+/// (`upload_batch_unwaited`): the fence the queue signals after each batch, and the uploaders
+/// whose batch the GPU may still be running (with the fence value that says it is done).
+struct Unwaited {
+    fence: ID3D12Fence,
+    value: u64,
+    busy: Vec<(u64, Uploader)>,
+    idle: Vec<Uploader>,
+}
+
+unsafe impl Send for Unwaited {}
+
+static UNWAITED: std::sync::Mutex<Option<std::collections::HashMap<usize, Unwaited>>> = std::sync::Mutex::new(None);
+
+/// uploaders of one queue at work at once before a batch waits on the CPU after all
+const UNWAITED_MAX: usize = 16;
+
+/// Crimson: `upload_batch` without the CPU's wait. The fence and the value it reaches once
+/// these copies are done come back: whoever uses the textures next makes its queue wait for
+/// that on the GPU (`ID3D12CommandQueue::Wait`), so the caller's thread goes on at once. None:
+/// the batch was waited for here after all (too many still running), or nothing was copied.
+pub unsafe fn upload_batch_unwaited(
+    dev: &ID3D12Device,
+    queue: &ID3D12CommandQueue,
+    items: &[(ID3D12Resource, Vec<Subresource>, Vec<D3D12_RESOURCE_STATES>)],
+) -> Result<(Vec<(usize, String)>, Option<(ID3D12Fence, u64)>), String> {
+    upload_batch_on(dev, queue, items, true)
+}
+
+unsafe fn upload_batch_on(
+    dev: &ID3D12Device,
+    queue: &ID3D12CommandQueue,
+    items: &[(ID3D12Resource, Vec<Subresource>, Vec<D3D12_RESOURCE_STATES>)],
+    unwaited: bool,
+) -> Result<(Vec<(usize, String)>, Option<(ID3D12Fence, u64)>), String> {
+    use crate::hle::d3d12x::frametime::{timed, Part};
     if items.is_empty() {
-        return Ok(Vec::new());
+        return Ok((Vec::new(), None));
     }
+    let record_timed = timed(Part::TexRecord);
     let key = windows::core::Interface::as_raw(queue) as usize;
-    let taken = UPLOADERS.lock().unwrap().as_mut().and_then(|m| m.remove(&key));
+    // an uploader the GPU is done with, for a batch nobody waits for: one whose batch has
+    // passed the shared fence, or a new one (None: too many at work – this batch waits)
+    let mut shared: Option<ID3D12Fence> = None;
+    let mut taken = None;
+    if unwaited {
+        let mut g = UNWAITED.lock().unwrap();
+        let m = g.get_or_insert_with(Default::default);
+        if !m.contains_key(&key) {
+            let fence: ID3D12Fence = dev.CreateFence(0, D3D12_FENCE_FLAG_NONE).map_err(err)?;
+            m.insert(key, Unwaited { fence, value: 0, busy: Vec::new(), idle: Vec::new() });
+        }
+        let u = m.get_mut(&key).unwrap();
+        let done = u.fence.GetCompletedValue();
+        let mut k = 0;
+        while k < u.busy.len() {
+            if u.busy[k].0 <= done {
+                let (_, up) = u.busy.swap_remove(k);
+                u.idle.push(up);
+            } else {
+                k += 1;
+            }
+        }
+        if let Some(up) = u.idle.pop() {
+            taken = Some(up);
+            shared = Some(u.fence.clone());
+        } else if u.busy.len() < UNWAITED_MAX {
+            shared = Some(u.fence.clone());
+        }
+    }
+    if shared.is_none() {
+        taken = UPLOADERS.lock().unwrap().as_mut().and_then(|m| m.remove(&key));
+    }
+    let give_back = |up: Uploader| {
+        if shared.is_some() {
+            if let Some(u) = UNWAITED.lock().unwrap().as_mut().and_then(|m| m.get_mut(&key)) {
+                u.idle.push(up);
+            }
+        } else {
+            put_back(key, up);
+        }
+    };
     let mut up = match taken {
         Some(u) => u,
         None => Uploader::new(dev)?,
@@ -292,8 +372,8 @@ pub unsafe fn upload_batch(dev: &ID3D12Device, queue: &ID3D12CommandQueue, items
         }
     }
     if planned.is_empty() {
-        put_back(key, up);
-        return Ok(failed);
+        give_back(up);
+        return Ok((failed, None));
     }
     let (staging, mapped) = up.staging(dev, total)?;
     up.alloc.Reset().map_err(err)?;
@@ -304,9 +384,33 @@ pub unsafe fn upload_batch(dev: &ID3D12Device, queue: &ID3D12CommandQueue, items
     }
     up.list.Close().map_err(err)?;
     queue.ExecuteCommandLists(&[Some(windows::core::Interface::cast(&up.list).map_err(err)?)]);
-    up.value += 1;
     let copy_error = |e| format!("texture copy: {e}");
-    queue.Signal(&up.fence, up.value).map_err(|e| copy_error(fence::api_error(dev, "Signal", e)))?;
+    if let Some(shared) = shared {
+        // nobody waits here: the uploader is at work until the shared fence passes the value
+        // signalled now (the GPU reads its upload buffer and runs its list until then)
+        let mut g = UNWAITED.lock().unwrap();
+        let Some(u) = g.as_mut().and_then(|m| m.get_mut(&key)) else {
+            std::mem::forget(up);
+            return Err("texture copy: the queue's shared fence is gone".into());
+        };
+        u.value += 1;
+        let value = u.value;
+        if let Err(e) = queue.Signal(&shared, value) {
+            u.value -= 1;
+            drop(g);
+            std::mem::forget(up);
+            return Err(copy_error(fence::api_error(dev, "Signal", e)));
+        }
+        u.busy.push((value, up));
+        return Ok((failed, Some((shared, value))));
+    }
+    up.value += 1;
+    if let Err(e) = queue.Signal(&up.fence, up.value) {
+        std::mem::forget(up);
+        return Err(copy_error(fence::api_error(dev, "Signal", e)));
+    }
+    drop(record_timed);
+    let _wait_timed = timed(Part::TexWait);
     if let Err(e) = fence::wait(&up.fence, up.value, dev, None, 10_000) {
         // the GPU may still read the upload buffer and run the list: they stay alive (a fresh
         // uploader next time) – freeing them under the GPU removed the device
@@ -314,7 +418,7 @@ pub unsafe fn upload_batch(dev: &ID3D12Device, queue: &ID3D12CommandQueue, items
         return Err(copy_error(e));
     }
     put_back(key, up);
-    Ok(failed)
+    Ok((failed, None))
 }
 
 fn put_back(key: usize, up: Uploader) {
