@@ -256,6 +256,10 @@ pub(super) unsafe extern "system" fn execute_indirect(this: *mut c_void, sig: us
     let pso = super::pso_async::resolve_wait(with(this, |s| s.pso));
     let (gfx, compute) = (super::real::is_translated_graphics(pso), super::real::is_translated_compute(pso));
     let (args_off, count_off) = (args_off + super::real::buffer_delta(args), count_off + super::real::buffer_delta(count_buf));
+    if compute && super::gpuwork::left_out(1, pso) {
+        count(DISPATCHES_SKIPPED);
+        return;
+    }
     if gfx || compute {
         super::gpuwork::note(if compute { 1 } else { 2 }, pso, [max, 0, 0]);
     }
@@ -848,6 +852,10 @@ pub(super) unsafe extern "system" fn dispatch(this: *mut c_void, x: u32, y: u32,
         if N.fetch_add(1, std::sync::atomic::Ordering::Relaxed) < 4 {
             crate::xlog_warn!("D3D12.X: Dispatch with a pipeline that has no translated console shader ({pso:#x}) skipped");
         }
+        count(DISPATCHES_SKIPPED);
+        return;
+    }
+    if super::gpuwork::left_out(0, pso) {
         count(DISPATCHES_SKIPPED);
         return;
     }

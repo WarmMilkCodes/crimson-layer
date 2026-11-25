@@ -47,6 +47,30 @@ pub fn note(kind: u8, pso: usize, args: [u32; 3]) {
     r.push_back(e);
 }
 
+/// `XCL_SKIP_RECORDS=hash,hash,…`: the dispatches (direct and indirect) of the compute
+/// pipelines made from these console records are left out – to find which program's work the
+/// GPU does not come back from. `indirect` in the list: every compute ExecuteIndirect.
+pub fn left_out(kind: u8, pso: usize) -> bool {
+    static LIST: OnceLock<(Vec<u64>, bool)> = OnceLock::new();
+    let (records, indirect) = LIST.get_or_init(|| {
+        let v = std::env::var("XCL_SKIP_RECORDS").unwrap_or_default();
+        let parts: Vec<&str> = v.split(',').map(|s| s.trim()).filter(|s| !s.is_empty()).collect();
+        (parts.iter().filter_map(|s| u64::from_str_radix(s, 16).ok()).collect(), parts.iter().any(|s| s.eq_ignore_ascii_case("indirect")))
+    });
+    if records.is_empty() && !*indirect {
+        return false;
+    }
+    let out = (*indirect && kind == 1) || NAMES.lock().unwrap().as_ref().and_then(|m| m.get(&pso)).is_some_and(|(r, _)| records.contains(r));
+    if out {
+        static N: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+        let n = N.fetch_add(1, std::sync::atomic::Ordering::Relaxed) + 1;
+        if n.is_power_of_two() {
+            crate::xlog_warn!("gpu work: XCL_SKIP_RECORDS – {n} dispatches left out (the last: {})", named(pso));
+        }
+    }
+    out
+}
+
 fn named(pso: usize) -> String {
     match NAMES.lock().unwrap().as_ref().and_then(|m| m.get(&pso).copied()) {
         Some((record, dxil)) => format!("record {record:016x} ({dxil} B DXIL)"),
