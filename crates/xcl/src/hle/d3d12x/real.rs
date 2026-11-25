@@ -2886,6 +2886,8 @@ fn overrides(kind: Kind) -> Vec<(&'static str, usize)> {
             ("SetPipelineState", cl_set_pipeline_state as usize),
             ("OMSetRenderTargets", cl_om_set_render_targets as usize),
             ("ClearRenderTargetView", cl_clear_rtv as usize),
+            ("ClearUnorderedAccessViewUint", cl_clear_uav_uint as usize),
+            ("ClearUnorderedAccessViewFloat", cl_clear_uav_float as usize),
             ("ExecuteIndirect", cl_execute_indirect as usize),
         ]),
         Kind::DmaList => v.extend_from_slice(&[
@@ -6714,6 +6716,45 @@ unsafe extern "system" fn dev_create_rtv(this: *mut c_void, res: *mut c_void, de
 }
 
 /// ClearRenderTargetView: as on the PC (`XCL_TRACE_FRAME`: the colours logged)
+/// ClearUnorderedAccessViewUint / Float(gpu handle, cpu handle, resource, values[4], rect count,
+/// rects): handles of a console heap (`console_heap`: addresses of its slots in title memory)
+/// become the PC handles of that slot's UAV. They went to the driver as they were: a retail
+/// title's FSR4 upscaler clears its targets when the world starts, and AMD's driver read
+/// through them (an access violation in amdxc64 at the first clear). Handles of no console
+/// heap are the PC's own.
+unsafe fn cl_clear_uav(this: *mut c_void, method: &str, gpu: u64, cpu: u64, res: *mut c_void, values: *const c_void, n: u32, rects: *const c_void) {
+    type F = unsafe extern "system" fn(*mut c_void, u64, u64, *mut c_void, *const c_void, u32, *const c_void);
+    let f: F = std::mem::transmute(orig_fn(this, slot_of(this, method)));
+    static CLEARS: AtomicU64 = AtomicU64::new(0);
+    static LEFT_OUT: AtomicU64 = AtomicU64::new(0);
+    match (super::console_heap::slot(gpu), super::console_heap::slot(cpu)) {
+        (None, None) => f(this, gpu, cpu, res, values, n, rects),
+        (Some(g), Some(c)) if g.pc_gpu_uav != 0 && c.pc_uav != 0 && !g.sampler && !c.sampler && !res.is_null() => {
+            if CLEARS.fetch_add(1, Ordering::Relaxed) == 0 {
+                crate::xlog_info!("D3D12.X: {method} with console heap handles – the slots' PC UAVs (the first)");
+            }
+            f(this, g.pc_gpu_uav, c.pc_uav, res, values, n, rects)
+        }
+        (g, c) => {
+            if LEFT_OUT.fetch_add(1, Ordering::Relaxed) < 4 {
+                crate::xlog_warn!(
+                    "D3D12.X: {method} left out: gpu handle {gpu:#x} ({}), cpu handle {cpu:#x} ({}), resource {res:p}",
+                    g.map_or("no console slot".to_string(), |g| format!("slot {}, PC GPU UAV {:#x}", g.k, g.pc_gpu_uav)),
+                    c.map_or("no console slot".to_string(), |c| format!("slot {}, PC UAV {:#x}", c.k, c.pc_uav))
+                );
+            }
+        }
+    }
+}
+
+unsafe extern "system" fn cl_clear_uav_uint(this: *mut c_void, gpu: u64, cpu: u64, res: *mut c_void, values: *const c_void, n: u32, rects: *const c_void) {
+    cl_clear_uav(this, "ClearUnorderedAccessViewUint", gpu, cpu, res, values, n, rects)
+}
+
+unsafe extern "system" fn cl_clear_uav_float(this: *mut c_void, gpu: u64, cpu: u64, res: *mut c_void, values: *const c_void, n: u32, rects: *const c_void) {
+    cl_clear_uav(this, "ClearUnorderedAccessViewFloat", gpu, cpu, res, values, n, rects)
+}
+
 unsafe extern "system" fn cl_clear_rtv(this: *mut c_void, rtv: usize, color: *const [f32; 4], n: u32, rects: *const c_void) {
     type F = unsafe extern "system" fn(*mut c_void, usize, *const [f32; 4], u32, *const c_void);
     let f: F = std::mem::transmute(orig_fn(this, slot_of(this, "ClearRenderTargetView")));
