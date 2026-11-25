@@ -256,6 +256,9 @@ pub(super) unsafe extern "system" fn execute_indirect(this: *mut c_void, sig: us
     let pso = super::pso_async::resolve_wait(with(this, |s| s.pso));
     let (gfx, compute) = (super::real::is_translated_graphics(pso), super::real::is_translated_compute(pso));
     let (args_off, count_off) = (args_off + super::real::buffer_delta(args), count_off + super::real::buffer_delta(count_buf));
+    if gfx || compute {
+        super::gpuwork::note(if compute { 1 } else { 2 }, pso, [max, 0, 0]);
+    }
     if !gfx && !compute {
         // A pipeline still being built (or whose build failed): its stand-in draws nothing, and
         // the list may hold XCL's ABI root signature from a translated draw before it – the PC
@@ -848,6 +851,7 @@ pub(super) unsafe extern "system" fn dispatch(this: *mut c_void, x: u32, y: u32,
         count(DISPATCHES_SKIPPED);
         return;
     }
+    super::gpuwork::note(0, pso, [x, y, z]);
     match translated_dispatch(this, list, pso, x, y, z) {
         Ok(()) => count(DISPATCHES),
         Err(e) => {

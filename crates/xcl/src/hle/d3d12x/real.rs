@@ -4447,6 +4447,9 @@ unsafe fn translated_compute_pso_once(this: *mut c_void, f: PsoFn, desc: *const 
         PSO_USER_SGPRS.lock().unwrap().get_or_insert_with(HashMap::new).insert(*ppv as usize, n);
     }
     note_translated_compute(hr, ppv);
+    if !ppv.is_null() {
+        super::gpuwork::name(*ppv as usize, record, dxil.len());
+    }
     crate::xlog_info!(
         "D3D12.X: compute PSO with the translated console CS ({} B DXIL, {} ms{})",
         dxil.len(),
@@ -7254,6 +7257,8 @@ pub fn log_device_removed() {
     if DONE.swap(true, Ordering::AcqRel) {
         return;
     }
+    // Crimson: the compute work the title gave the GPU last
+    super::gpuwork::dump();
     crate::xlog_error!("D3D12 device removed: {:#x} {}", e.code().0 as u32, e.message());
     unsafe {
         let Ok(dred) = dev.cast::<ID3D12DeviceRemovedExtendedData>() else { return };
