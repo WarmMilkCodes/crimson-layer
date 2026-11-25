@@ -5220,6 +5220,7 @@ unsafe fn translated_graphics_pso_once(this: *mut c_void, f: PsoFn, desc: *const
     note_pso_rs(*ppv, rs);
     TRANSLATED_GRAPHICS.lock().unwrap().get_or_insert_with(HashSet::new).insert(*ppv as usize);
     note_rect_list_gs(*ppv as usize, &copy, rect_gs.is_some());
+    super::gpuwork::name_graphics(*ppv as usize, crate::gpu::shader::fnv64(vs), shader_bytes(&d.PS).map_or(0, crate::gpu::shader::fnv64));
     if super::present::trace_frame() {
         let ps = shader_bytes(&d.PS).map_or(0, crate::gpu::shader::fnv64);
         PSO_SHADERS.lock().unwrap().get_or_insert_with(HashMap::new).insert(*ppv as usize, (crate::gpu::shader::fnv64(vs), ps));
@@ -7282,6 +7283,11 @@ pub fn log_device_removed() {
                 let count = node.BreadcrumbCount as usize;
                 let ops: Vec<String> = (done.saturating_sub(3)..(done + 3).min(count)).map(|i| format!("{}{}", if i == done { ">" } else { "" }, (*node.pCommandHistory.add(i)).0)).collect();
                 crate::xlog_error!("DRED: list {:p} on queue {:p}: {done} of {count} operations done, around: {}", node.pCommandList.as_ref().map_or(std::ptr::null_mut(), |l| l.as_raw()), node.pCommandQueue.as_ref().map_or(std::ptr::null_mut(), |q| q.as_raw()), ops.join(" "));
+                // Crimson: a list the GPU stopped inside – the draws and dispatches there
+                if done > 0 && done < count {
+                    let history: Vec<i32> = (0..count).map(|i| (*node.pCommandHistory.add(i)).0).collect();
+                    super::gpuwork::dump_list(node.pCommandList.as_ref().map_or(0, |l| l.as_raw() as usize), done, &history);
+                }
             });
         }
     }

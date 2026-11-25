@@ -12,17 +12,39 @@ use std::time::Instant;
 #[derive(Clone, Copy)]
 struct Entry {
     ms: u64,
-    /// 0 Dispatch, 1 ExecuteIndirect (compute), 2 ExecuteIndirect (graphics)
+    /// 0 Dispatch, 1 ExecuteIndirect (compute), 2 ExecuteIndirect (graphics), 3 DrawInstanced,
+    /// 4 DrawIndexedInstanced
     kind: u8,
     pso: usize,
     args: [u32; 3],
+    /// the PC command list it was recorded on
+    list: usize,
 }
 
-const KEPT: usize = 16384;
+const KEPT: usize = 65536;
+
+thread_local! {
+    /// the list the calling thread records on (`on_list`): `note` has no list of its own
+    static LIST: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
+
+/// The PC list the calling thread's next `note`s are recorded on.
+pub fn on_list(list: usize) {
+    let _ = LIST.try_with(|l| l.set(list));
+}
 
 static RING: Mutex<VecDeque<Entry>> = Mutex::new(VecDeque::new());
 /// pipeline → (console record's hash, bytes of DXIL)
 static NAMES: Mutex<Option<HashMap<usize, (u64, usize)>>> = Mutex::new(None);
+/// graphics pipeline → (hash of its console VS, of its PS)
+static GRAPHICS: Mutex<Option<HashMap<usize, (u64, u64)>>> = Mutex::new(None);
+
+/// A translated graphics pipeline: its console shaders.
+pub fn name_graphics(pso: usize, vs: u64, ps: u64) {
+    if pso != 0 {
+        GRAPHICS.lock().unwrap().get_or_insert_with(HashMap::new).insert(pso, (vs, ps));
+    }
+}
 
 fn now_ms() -> u64 {
     static T0: OnceLock<Instant> = OnceLock::new();
@@ -39,7 +61,7 @@ pub fn name(pso: usize, record: u64, dxil: usize) {
 /// Work recorded on a list (`kind` as in `Entry`; a Dispatch's groups, an ExecuteIndirect's
 /// greatest count).
 pub fn note(kind: u8, pso: usize, args: [u32; 3]) {
-    let e = Entry { ms: now_ms(), kind, pso, args };
+    let e = Entry { ms: now_ms(), kind, pso, args, list: LIST.try_with(|l| l.get()).unwrap_or(0) };
     let mut r = RING.lock().unwrap();
     if r.len() == KEPT {
         r.pop_front();
@@ -74,7 +96,47 @@ pub fn left_out(kind: u8, pso: usize) -> bool {
 fn named(pso: usize) -> String {
     match NAMES.lock().unwrap().as_ref().and_then(|m| m.get(&pso).copied()) {
         Some((record, dxil)) => format!("record {record:016x} ({dxil} B DXIL)"),
-        None => format!("pipeline {pso:#x}"),
+        None => match GRAPHICS.lock().unwrap().as_ref().and_then(|m| m.get(&pso).copied()) {
+            Some((vs, ps)) => format!("graphics pipeline {pso:#x} (VS {vs:016x}, PS {ps:016x})"),
+            None => format!("pipeline {pso:#x}"),
+        },
+    }
+}
+
+const KINDS: [&str; 5] = ["Dispatch", "ExecuteIndirect (compute)", "ExecuteIndirect (graphics)", "DrawInstanced", "DrawIndexedInstanced"];
+
+/// DRED's operation code (D3D12_AUTO_BREADCRUMB_OP) of an entry's kind.
+fn dred_code(kind: u8) -> i32 {
+    [6, 5, 5, 3, 4][kind.min(4) as usize]
+}
+
+/// The device is lost and DRED says the GPU did `done` of the operations `history` (DRED's
+/// codes) of `list`: the draws and dispatches recorded on that list around where it stopped.
+/// The list's last operations of those kinds are matched to DRED's by counting – the line
+/// shows both, so a mismatch is seen.
+pub fn dump_list(list: usize, done: usize, history: &[i32]) {
+    let drawing = |c: i32| (3..=6).contains(&c);
+    let total = history.iter().filter(|&&c| drawing(c)).count();
+    let before = history[..done.min(history.len())].iter().filter(|&&c| drawing(c)).count();
+    let mine: Vec<Entry> = RING.lock().unwrap().iter().filter(|e| e.list == list).copied().collect();
+    if mine.len() < total || total == 0 {
+        crate::xlog_error!("gpu work: list {list:#x}: {} draws / dispatches recorded, DRED has {total} – not matched", mine.len());
+        return;
+    }
+    let session = &mine[mine.len() - total..];
+    let codes: Vec<i32> = history.iter().copied().filter(|&c| drawing(c)).collect();
+    let agree = session.iter().zip(codes.iter()).filter(|(e, c)| dred_code(e.kind) == **c).count();
+    crate::xlog_error!("gpu work: list {list:#x} stopped at its draw / dispatch #{before} of {total} ({agree} of {total} kinds agree with DRED's)");
+    for k in before.saturating_sub(6)..(before + 3).min(total) {
+        let e = &session[k];
+        crate::xlog_error!(
+            "gpu work:   {}#{k} {} {:?} of {} (DRED: {})",
+            if k == before { ">" } else if k + 1 == before { "*" } else { " " },
+            KINDS[e.kind.min(4) as usize],
+            e.args,
+            named(e.pso),
+            codes[k]
+        );
     }
 }
 
@@ -87,7 +149,11 @@ pub fn dump() {
     // by pipeline: how often, the most groups of one dispatch, an example
     let mut by: HashMap<(usize, u8), (u64, u64, [u32; 3])> = HashMap::new();
     for e in &recent {
-        let groups = if e.kind == 0 { e.args.iter().map(|&a| a as u64).product() } else { e.args[0] as u64 };
+        let groups = match e.kind {
+            0 => e.args.iter().map(|&a| a as u64).product(),
+            3 | 4 => e.args[0] as u64 * e.args[1] as u64,
+            _ => e.args[0] as u64,
+        };
         let b = by.entry((e.pso, e.kind)).or_insert((0, 0, e.args));
         b.0 += 1;
         if groups >= b.1 {
@@ -101,7 +167,7 @@ pub fn dump() {
         now_ms().saturating_sub(last.ms),
         by.len()
     );
-    let kind = |k: u8| ["Dispatch", "ExecuteIndirect (compute)", "ExecuteIndirect (graphics)"][k.min(2) as usize];
+    let kind = |k: u8| KINDS[k.min(4) as usize];
     let mut often: Vec<_> = by.iter().collect();
     often.sort_by_key(|(_, v)| std::cmp::Reverse(v.0));
     for ((pso, k), (n, most, args)) in often.iter().take(14) {

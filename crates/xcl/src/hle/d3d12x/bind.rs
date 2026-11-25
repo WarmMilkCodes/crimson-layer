@@ -261,6 +261,7 @@ pub(super) unsafe extern "system" fn execute_indirect(this: *mut c_void, sig: us
         return;
     }
     if gfx || compute {
+        super::gpuwork::on_list(this as usize);
         super::gpuwork::note(if compute { 1 } else { 2 }, pso, [max, 0, 0]);
     }
     if !gfx && !compute {
@@ -470,6 +471,8 @@ pub(super) unsafe extern "system" fn draw_instanced(this: *mut c_void, vertices:
             return;
         }
         super::list_x::sync_title_buffers(this, None, first_vertex, vertices, if first_instance != 0 { instances.max(2) } else { instances });
+        super::gpuwork::on_list(this as usize);
+        super::gpuwork::note(3, super::pso_async::resolve(with(this, |s| s.pso)), [vertices, instances, first_vertex]);
         list.DrawInstanced(vertices, instances, first_vertex, first_instance);
     }
 }
@@ -496,7 +499,10 @@ pub(super) unsafe fn prepare_indexed_draw(
     base_vertex: i32,
 ) -> Option<ID3D12GraphicsCommandList> {
     DRAW_ARGS.with(|d| d.set((true, indices, instances, first_index, base_vertex)));
-    graphics_bound(this)
+    let list = graphics_bound(this)?;
+    super::gpuwork::on_list(this as usize);
+    super::gpuwork::note(4, super::pso_async::resolve(with(this, |s| s.pso)), [indices, instances, first_index]);
+    Some(list)
 }
 
 /// Submit an indexed draw whose translated graphics state has already been prepared.
@@ -859,6 +865,7 @@ pub(super) unsafe extern "system" fn dispatch(this: *mut c_void, x: u32, y: u32,
         count(DISPATCHES_SKIPPED);
         return;
     }
+    super::gpuwork::on_list(this as usize);
     super::gpuwork::note(0, pso, [x, y, z]);
     match translated_dispatch(this, list, pso, x, y, z) {
         Ok(()) => count(DISPATCHES),
