@@ -336,7 +336,8 @@ fn submit_as(standin: usize, compute: bool, job: Job, send: bool, key: u64) {
         let _ = queue().lock().unwrap().send(p);
     } else if used::known(key) {
         if let Some(q) = preload() {
-            q.list.lock().unwrap().push_back(p);
+            static SEQ: AtomicU64 = AtomicU64::new(0);
+            q.list.lock().unwrap().push(Ranked(used::rank(key), SEQ.fetch_add(1, Ordering::Relaxed), p));
             q.cv.notify_one();
         }
     }
@@ -364,7 +365,25 @@ mod used {
 
     struct Used {
         earlier: RwLock<HashSet<u64>>,
+        /// Crimson: each key's place in the file – the order runs first used them (the file is
+        /// appended at each first use), so the preload builds them in the order they are needed
+        order: RwLock<std::collections::HashMap<u64, u32>>,
         now: Mutex<(HashSet<u64>, Option<std::fs::File>)>,
+    }
+
+    /// The keys in a `used-pipelines.txt` with their first line (first use first).
+    pub fn parse_ordered(text: &str) -> std::collections::HashMap<u64, u32> {
+        let mut m = std::collections::HashMap::new();
+        for k in text.lines().filter_map(|l| u64::from_str_radix(l.trim(), 16).ok()).filter(|&k| k != 0) {
+            let n = m.len() as u32;
+            m.entry(k).or_insert(n);
+        }
+        m
+    }
+
+    /// Where an earlier run first used a pipeline of these shaders (lower: sooner).
+    pub fn rank(key: u64) -> u32 {
+        get().order.read().unwrap().get(&key).copied().unwrap_or(u32::MAX)
     }
 
     /// The keys in a `used-pipelines.txt` (lines that are not a hexadecimal key are passed over).
@@ -377,10 +396,12 @@ mod used {
         U.get_or_init(|| {
             // (a test neither reads nor writes the user's file)
             if cfg!(test) {
-                return Used { earlier: RwLock::new(HashSet::new()), now: Mutex::new((HashSet::new(), None)) };
+                return Used { earlier: RwLock::new(HashSet::new()), order: RwLock::new(Default::default()), now: Mutex::new((HashSet::new(), None)) };
             }
             let path = crate::gpu::recomp::dxc::cache_dir().join("used-pipelines.txt");
-            let earlier = parse(&std::fs::read_to_string(&path).unwrap_or_default());
+            let text = std::fs::read_to_string(&path).unwrap_or_default();
+            let earlier = parse(&text);
+            let order = parse_ordered(&text);
             if !earlier.is_empty() {
                 crate::xlog_info!("D3D12.X: the pipelines of {} shader sets an earlier run used are built ahead of their first use", earlier.len());
             }
@@ -388,7 +409,7 @@ mod used {
                 let _ = std::fs::create_dir_all(dir);
             }
             let file = std::fs::OpenOptions::new().create(true).append(true).open(&path).ok();
-            Used { now: Mutex::new((earlier.clone(), file)), earlier: RwLock::new(earlier) }
+            Used { now: Mutex::new((earlier.clone(), file)), earlier: RwLock::new(earlier), order: RwLock::new(order) }
         })
     }
 
@@ -427,8 +448,31 @@ mod used {
 /// priority: a pipeline that is bound is not held up by the ones made ahead (whoever takes
 /// `job` first builds it), and the title's own threads are not either.
 struct Preload {
-    list: Mutex<std::collections::VecDeque<Arc<Pending>>>,
+    /// by when an earlier run first used each (`used::rank`), soonest first; the title makes
+    /// its pipelines in another order than it uses them
+    list: Mutex<std::collections::BinaryHeap<Ranked>>,
     cv: Condvar,
+}
+
+/// A pipeline waiting to be built ahead, ordered soonest-used first (then as made).
+struct Ranked(u32, u64, Arc<Pending>);
+
+impl PartialEq for Ranked {
+    fn eq(&self, o: &Self) -> bool {
+        (self.0, self.1) == (o.0, o.1)
+    }
+}
+impl Eq for Ranked {}
+impl PartialOrd for Ranked {
+    fn partial_cmp(&self, o: &Self) -> Option<std::cmp::Ordering> {
+        Some(self.cmp(o))
+    }
+}
+impl Ord for Ranked {
+    // a max-heap: the lowest rank, then the earliest made, is the greatest
+    fn cmp(&self, o: &Self) -> std::cmp::Ordering {
+        (o.0, o.1).cmp(&(self.0, self.1))
+    }
 }
 
 fn preload() -> Option<&'static Preload> {
@@ -455,7 +499,7 @@ fn preload() -> Option<&'static Preload> {
                     let p = {
                         let mut g = q.list.lock().unwrap();
                         loop {
-                            if let Some(p) = g.pop_front() {
+                            if let Some(Ranked(_, _, p)) = g.pop() {
                                 break p;
                             }
                             g = q.cv.wait(g).unwrap();
@@ -465,7 +509,7 @@ fn preload() -> Option<&'static Preload> {
                     if p.orphan.load(Ordering::Acquire) {
                         continue;
                     }
-                    let _room = crate::memgate::admit(crate::memgate::Work::Title);
+                    let _room = crate::memgate::admit(crate::memgate::Work::Preload);
                     // (None: a bind took it and builds it itself)
                     let job = p.job.lock().unwrap().take();
                     if let Some(job) = job {
@@ -480,6 +524,46 @@ fn preload() -> Option<&'static Preload> {
         }
     });
     Some(q)
+}
+
+#[cfg(test)]
+mod preload_order_tests {
+    use super::*;
+
+    #[test]
+    fn the_file_order_is_the_first_use_order() {
+        let m = used::parse_ordered("00000000000000b0\n00000000000000a0\nnot a key\n00000000000000b0\n00000000000000c0\n");
+        assert_eq!((m[&0xb0], m[&0xa0], m[&0xc0]), (0, 1, 2));
+    }
+
+    #[test]
+    fn the_preload_builds_the_soonest_used_first() {
+        let p = |k| {
+            Arc::new(Pending {
+                job: Mutex::new(None),
+                sent: Default::default(),
+                real: AtomicUsize::new(0),
+                done: Mutex::new(false),
+                cv: Condvar::new(),
+                compute: true,
+                key: k,
+                used: Default::default(),
+                orphan: Default::default(),
+                late: Default::default(),
+                spared: Default::default(),
+                demand: Default::default(),
+            })
+        };
+        let mut h = std::collections::BinaryHeap::new();
+        // made in this order; first used: 3rd, 1st, never, 2nd
+        h.push(Ranked(2, 0, p(1)));
+        h.push(Ranked(0, 1, p(2)));
+        h.push(Ranked(u32::MAX, 2, p(3)));
+        h.push(Ranked(1, 3, p(4)));
+        h.push(Ranked(u32::MAX, 4, p(5)));
+        let order: Vec<u64> = std::iter::from_fn(|| h.pop().map(|Ranked(_, _, p)| p.key)).collect();
+        assert_eq!(order, [2, 4, 1, 3, 5]);
+    }
 }
 
 #[cfg(test)]

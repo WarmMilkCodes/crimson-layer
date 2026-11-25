@@ -44,6 +44,10 @@ pub enum Work {
     Precompile { bytes: usize },
     /// A running title's background pipeline build.
     Title,
+    /// A pipeline of an earlier run built ahead of its first use (`pso_async` preload): no
+    /// hurry, so it waits for physical memory as a precompile does – the preload that built
+    /// every pipeline an earlier run used, as fast as it could, ran the machine out of memory.
+    Preload,
 }
 
 /// Held while a gated job runs.
@@ -97,7 +101,9 @@ pub fn available() -> Option<(u64, u64)> {
 
 /// Whether `work` may start with `free` (physical, commit) and `running` gated jobs.
 fn room(work: Work, free: Option<(u64, u64)>, running: usize, reserve: u64, big: usize) -> bool {
-    if running == 0 {
+    // with nothing running the next job always goes, so work moves – but nothing waits for the
+    // preload: it waits for memory even then
+    if running == 0 && !matches!(work, Work::Preload) {
         return true;
     }
     let Some((phys, commit)) = free else { return true };
@@ -107,6 +113,7 @@ fn room(work: Work, free: Option<(u64, u64)>, running: usize, reserve: u64, big:
             phys >= need && commit >= need
         }
         Work::Title => running < TITLE_FLOOR || commit >= TITLE_RESERVE,
+        Work::Preload => phys >= reserve && commit >= reserve,
     }
 }
 
@@ -137,6 +144,8 @@ pub fn admit(work: Work) -> Ticket {
             // spaced: a big program, and whatever waited (a title's builds are not held for it)
             let spacing = match (work, big, since.is_some()) {
                 (Work::Title, ..) => 0,
+                (Work::Preload, _, true) => WAITED_SPACING_MS,
+                (Work::Preload, ..) => 0,
                 (_, true, _) => BIG_SPACING_MS,
                 (_, _, true) => WAITED_SPACING_MS,
                 _ => 0,
@@ -205,6 +214,15 @@ mod tests {
         let big = Work::Precompile { bytes: BIG };
         assert!(!room(big, Some((8 * GB, 60 * GB)), 1, 6 * GB, BIG));
         assert!(room(big, Some((9 * GB, 60 * GB)), 1, 6 * GB, BIG));
+    }
+
+    #[test]
+    fn the_preload_waits_for_physical_memory() {
+        // the title fills physical memory: building ahead stops, the title's own builds go on
+        assert!(!room(Work::Preload, Some((4 * GB, 60 * GB)), 1, 6 * GB, BIG));
+        assert!(!room(Work::Preload, Some((4 * GB, 60 * GB)), 0, 6 * GB, BIG), "the preload went ahead with nothing running");
+        assert!(room(Work::Title, Some((4 * GB, 60 * GB)), 3, 6 * GB, BIG));
+        assert!(room(Work::Preload, Some((7 * GB, 60 * GB)), 1, 6 * GB, BIG));
     }
 
     #[test]
