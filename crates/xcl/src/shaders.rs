@@ -1391,6 +1391,11 @@ fn precompile(input: &Input, limit: usize, windows: u32, split: Option<bool>, on
     // `--split` sets both
     let graphics_split = split.unwrap_or_else(recomp::runner::graphics_wave32);
     let split = split.unwrap_or_else(|| recomp::pso::split_wave64_forced() || recomp::runner::wave64_supported().is_ok_and(|w| !w));
+    match crate::brand::shader_cache_state(&recomp::dxc::cache_dir()) {
+        crate::brand::ShaderCache::Current => println!("{}: the shader cache is this build's – only what is missing is built", crate::brand::NAME),
+        crate::brand::ShaderCache::Stale { .. } => println!("{}: the shader cache is from another build's translator – shaders are translated again; driver builds of unchanged shaders are reused", crate::brand::NAME),
+        crate::brand::ShaderCache::Unknown => {}
+    }
     println!(
         "precompiling {n} shaders into {} ({} compile threads; {} memory windows{}{})",
         recomp::dxc::cache_dir().display(),
@@ -1516,6 +1521,10 @@ fn precompile(input: &Input, limit: usize, windows: u32, split: Option<bool>, on
     }
     for e in errors.into_inner().unwrap() {
         println!("  {e}");
+    }
+    // a whole pass done: the cache is this translator's (`brand` – `crimson run` stops warning)
+    if limit == usize::MAX && std::env::var_os("XCL_PIPELINE_ONLY").is_none() {
+        crate::brand::mark_shader_cache(&recomp::dxc::cache_dir());
     }
     0
 }

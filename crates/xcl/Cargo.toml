@@ -13,6 +13,11 @@ path = "src/lib.rs"
 name = "xcl"
 path = "src/main.rs"
 
+# Crimson's name for the same program (xcl.exe stays for upstream's scripts and tests)
+[[bin]]
+name = "crimson"
+path = "src/main.rs"
+
 [dependencies]
 miniz_oxide = { version = "0.9", features = ["simd"] }
 retour = "0.3"

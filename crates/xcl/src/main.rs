@@ -18,7 +18,7 @@ unsafe extern "system" fn xcl_tls_callback(_h: *mut c_void, reason: u32, _r: *mu
 static XCL_TLS_CALLBACK: unsafe extern "system" fn(*mut c_void, u32, *mut c_void) = xcl_tls_callback;
 
 const HELP: &str = "\
-XCL – Xbox Series X|S → Windows compatibility layer
+Crimson – Xbox Series X|S games on Windows (built on XCL)
 
 Usage:
   xcl run <game folder | file.exe> [-- game arguments]
@@ -73,8 +73,8 @@ fn main() {
         Some("disasm") if args.len() >= 2 => xcl::disasm::run(&PathBuf::from(&args[1]), &args[2..]),
         Some("shaders") if args.len() >= 2 => xcl::shaders::run(&PathBuf::from(&args[1]), &args[2..]),
         Some("rpf") if args.len() >= 2 => xcl::rpf::run(&PathBuf::from(&args[1]), &args[2..]),
-        Some("--version") | Some("-V") => {
-            println!("xcl {}", env!("CARGO_PKG_VERSION"));
+        Some("--version") | Some("-V") | Some("version") => {
+            println!("{}", xcl::brand::version_line());
             0
         }
         None if started_by_double_click() => run_picked_game(),
@@ -117,10 +117,10 @@ fn run_picked_game() -> i32 {
     let Some(target) = target else { return 0 };
     let _ = std::fs::create_dir_all(xcl::launcher::data_root());
     let _ = std::fs::write(&last_file, target.to_string_lossy().as_bytes());
-    println!("xcl run \"{}\"", target.display());
+    println!("crimson run \"{}\"", target.display());
     let code = xcl::launcher::run(&target, &[]);
     if code != 0 {
-        println!("\nXCL ended with code {code}. Press Enter to close.");
+        println!("\n{} ended with code {code}. Press Enter to close.", xcl::brand::NAME);
         let _ = std::io::stdin().read_line(&mut String::new());
     }
     code
@@ -206,9 +206,9 @@ fn menu(last: Option<&std::path::Path>) -> Choice {
     const AGAIN: i32 = 101;
     type TaskDialogIndirect = unsafe extern "system" fn(*const TASKDIALOGCONFIG, *mut i32, *mut i32, *mut i32) -> i32;
     let Some(f) = (unsafe { system_proc("comctl32.dll", "TaskDialogIndirect") }) else { return Choice::NoMenu };
-    let title = wide("XCL");
+    let title = wide(xcl::brand::NAME);
     let heading = wide("Run an Xbox Series game");
-    let content = wide("XCL runs the game from its unpacked files. Choose the game's exe or its MicrosoftGame.config.");
+    let content = wide(&format!("{} runs the game from its unpacked files. Choose the game's exe or its MicrosoftGame.config.", xcl::brand::NAME));
     let again = last.map(|p| wide(&format!("Run again\n{}", p.display())));
     let choose = wide("Choose a game…\nThe game's exe or MicrosoftGame.config");
     let mut buttons = Vec::new();
@@ -244,7 +244,7 @@ fn pick_game_file() -> Option<PathBuf> {
     let f = unsafe { system_proc("comdlg32.dll", "GetOpenFileNameW") }?;
     // pairs of (description, pattern), each ending in NUL, the list in one more
     let filter: Vec<u16> = "Xbox game (*.exe, MicrosoftGame.config)\0*.exe;MicrosoftGame.config\0All files\0*.*\0\0".encode_utf16().collect();
-    let title = wide("XCL – choose a game");
+    let title = wide(&format!("{} – choose a game", xcl::brand::NAME));
     let mut file = vec![0u16; 32768];
     let mut ofn: OPENFILENAMEW = unsafe { std::mem::zeroed() };
     ofn.lStructSize = std::mem::size_of::<OPENFILENAMEW>() as u32;

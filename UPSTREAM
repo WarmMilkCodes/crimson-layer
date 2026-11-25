@@ -1,0 +1,5 @@
+# The XCL commit this Crimson build is based on. Changed only by a deliberate sync
+# (see docs/crimson-sync.md); Crimson releases name it.
+repo = "https://github.com/xcl-dev/xcl"
+commit = "1a0bbe3a2ba91ea8f5b6fc29130a053868d3c9e6"
+date = "2026-11-25"

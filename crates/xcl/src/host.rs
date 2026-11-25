@@ -22,6 +22,7 @@ pub fn host_main(boot_path: &Path) -> i32 {
         boot.config.log_to_stderr,
     );
     crate::xlog_info!("XCL {} – host for '{}'", env!("CARGO_PKG_VERSION"), boot.title);
+    crate::xlog_info!("{}", crate::brand::version_line());
     crate::xlog_info!("game: {} (read-only folder: {})", boot.exe_path.display(), boot.game_root.display());
     crate::xlog_info!("XCL data: {}", boot.data_dir.display());
     crate::xlog_info!(

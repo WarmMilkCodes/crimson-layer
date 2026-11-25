@@ -584,13 +584,12 @@ fn cache_key(src: &str, entry: &str, profile: &str) -> u64 {
     cache_key_for_toolchain(src, entry, profile, toolchain_identity())
 }
 
-/// Folder of the DXIL cache: `XCL_DXIL_CACHE`, else `%LOCALAPPDATA%\xcl\dxil`.
+/// Folder of the DXIL cache: `XCL_DXIL_CACHE`, else `%LOCALAPPDATA%\Crimson\dxil` (`xcl\dxil` from before the rename, where only that exists).
 pub fn cache_dir() -> PathBuf {
     if let Ok(d) = std::env::var("XCL_DXIL_CACHE") {
         return PathBuf::from(d);
     }
-    let base = std::env::var("LOCALAPPDATA").map(PathBuf::from).unwrap_or_else(|_| std::env::temp_dir());
-    base.join("xcl").join("dxil")
+    crate::brand::local_dir("Crimson", "xcl").join("dxil")
 }
 
 /// DXIL cache statistics for this process.

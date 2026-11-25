@@ -6,6 +6,7 @@
 #![allow(function_casts_as_integer)]
 
 #[macro_use]
+pub mod brand;
 pub mod log;
 pub mod manifest;
 pub mod config;

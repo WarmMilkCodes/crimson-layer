@@ -6,13 +6,13 @@ use std::path::{Path, PathBuf};
 use crate::config::{Boot, Config};
 use crate::util::wide;
 
-/// Data root: `%XCL_DATA_ROOT%` or `%LOCALAPPDATA%\XCL`.
+/// Data root: `%XCL_DATA_ROOT%` or `%LOCALAPPDATA%\Crimson` (`%LOCALAPPDATA%\XCL` where only
+/// that one exists, from before the rename).
 pub fn data_root() -> PathBuf {
     if let Ok(p) = std::env::var("XCL_DATA_ROOT") {
         return PathBuf::from(p);
     }
-    let base = std::env::var("LOCALAPPDATA").unwrap_or_else(|_| std::env::temp_dir().to_string_lossy().into_owned());
-    PathBuf::from(base).join("XCL")
+    crate::brand::local_dir("Crimson", "XCL")
 }
 
 /// Values of `attr` on every `<tag …>` element (so "<Executable" != "<ExecutableList").
@@ -140,7 +140,7 @@ pub fn read_game_config(root: &Path) -> (Vec<String>, Option<String>) {
 
 /// `xcl.exe` itself (by name, path or identical bytes) must never be picked as the game.
 fn is_xcl_copy(p: &Path) -> bool {
-    if p.file_name().map(|n| n.to_string_lossy().eq_ignore_ascii_case("xcl.exe")).unwrap_or(false) {
+    if p.file_name().map(|n| ["xcl.exe", "crimson.exe"].iter().any(|s| n.to_string_lossy().eq_ignore_ascii_case(s))).unwrap_or(false) {
         return true;
     }
     let Ok(me) = std::env::current_exe() else { return false };
@@ -286,6 +286,10 @@ fn quote(a: &str) -> String {
 }
 
 pub fn run(target: &Path, args: &[String]) -> i32 {
+    // whether the shader caches were built by this build's translator (`brand`)
+    if let Some(note) = crate::brand::shader_cache_note(&crate::gpu::recomp::dxc::cache_dir()) {
+        eprintln!("{note}\n");
+    }
     let (root, explicit_exe, title) = match resolve_location(target) {
         Ok(x) => x,
         Err(e) => {
