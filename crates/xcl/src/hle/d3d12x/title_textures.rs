@@ -692,8 +692,44 @@ pub(super) unsafe fn refresh(queue: *mut c_void) {
         return;
     }
     let _refresh = REFRESH.lock().unwrap();
-    own_work(|| refresh_once(queue));
+    if !look_left_out() {
+        own_work(|| refresh_once(queue));
+    } else if let Some(q) = ID3D12CommandQueue::from_raw_borrowed(&queue) {
+        // no look, so no written pages – but the queue still waits for tiles mapped and zeroed
+        // since, as before every submit
+        own_work(|| {
+            super::sparse::before_execute(q, &[], 0x1000);
+            super::vram::before_execute(q);
+        });
+    }
     wait_for_uploads(queue);
+}
+
+/// Crimson, an experiment: `XCL_REFRESH_MIN_MS=n` – a submit does not look for CPU writes when
+/// the last look was under n ms ago and no new texture waits for its first upload. A look costs
+/// a retail game's world 20 – 40 ms and every submit has one, some thirty a frame; what the
+/// CPU wrote in between reaches the GPU up to n ms late (a frame's constants or a texture a
+/// frame old) – the price to be seen before this is more than a switch.
+fn look_left_out() -> bool {
+    static MIN_MS: std::sync::OnceLock<u64> = std::sync::OnceLock::new();
+    static START: std::sync::OnceLock<std::time::Instant> = std::sync::OnceLock::new();
+    static LAST_MS: AtomicU64 = AtomicU64::new(0);
+    static LEFT_OUT: AtomicU64 = AtomicU64::new(0);
+    let min = *MIN_MS.get_or_init(|| std::env::var("XCL_REFRESH_MIN_MS").ok().and_then(|v| v.trim().parse().ok()).unwrap_or(0));
+    if min == 0 {
+        return false;
+    }
+    let now = START.get_or_init(std::time::Instant::now).elapsed().as_millis() as u64 + 1;
+    let last = LAST_MS.load(Ordering::Relaxed);
+    if last != 0 && now - last < min && PENDING.load(Ordering::Relaxed) == 0 {
+        let n = LEFT_OUT.fetch_add(1, Ordering::Relaxed) + 1;
+        if n == 1 || (n.is_power_of_two() && n >= 1024) {
+            crate::xlog_info!("title textures: {n} looks for CPU writes left out so far (XCL_REFRESH_MIN_MS={min})");
+        }
+        return true;
+    }
+    LAST_MS.store(now, Ordering::Relaxed);
+    false
 }
 
 /// Crimson: `XCL_TEXTURE_UPLOAD_WAIT=gpu` – a texture upload does not hold the submitting thread
@@ -1340,6 +1376,13 @@ unsafe fn upload_queue(dev: &ID3D12Device, device: usize) -> Result<ID3D12Comman
 /// reported as written too; the uploads keep to what they track.
 const WATCH_GAP: usize = 64 << 20;
 
+/// Crimson, an experiment: `XCL_WATCH_GAP_MB=n` in place of `WATCH_GAP`'s 64 (a retail game's
+/// world has each look cover 16 GB in some 35 ranges, 8 ms a look: how much of that is gaps?).
+fn watch_gap() -> usize {
+    static GAP: std::sync::OnceLock<usize> = std::sync::OnceLock::new();
+    *GAP.get_or_init(|| std::env::var("XCL_WATCH_GAP_MB").ok().and_then(|v| v.trim().parse::<usize>().ok()).map_or(WATCH_GAP, |mb| mb << 20))
+}
+
 /// The parts of `wanted` (start, end) inside `regions` (base, size), merged (gaps under
 /// `WATCH_GAP` too) and sorted, as (base, size) – each within one region (a write-watch call
 /// covers one allocation).
@@ -1348,7 +1391,7 @@ fn watch_ranges(regions: &[(usize, usize)], mut wanted: Vec<(usize, usize)>) -> 
     let mut merged: Vec<(usize, usize)> = Vec::new();
     for (a, b) in wanted {
         match merged.last_mut() {
-            Some(last) if a <= last.1.saturating_add(WATCH_GAP) => last.1 = last.1.max(b),
+            Some(last) if a <= last.1.saturating_add(watch_gap()) => last.1 = last.1.max(b),
             _ => merged.push((a, b)),
         }
     }
