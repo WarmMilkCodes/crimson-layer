@@ -279,7 +279,13 @@ mod translated {
         dir.join("translated")
             .join("v2")
             .join(format!("{ident:016x}"))
-            .join(format!("{:016x}_{stage:?}_{sampler_base}_{windows}_{}.bin", crate::gpu::shader::fnv64(blob), split as u8))
+            // (a program with a loop budget of its own is another translation: `loop_budget`)
+            .join(format!(
+                "{:016x}_{stage:?}_{sampler_base}_{windows}_{}{}.bin",
+                crate::gpu::shader::fnv64(blob),
+                split as u8,
+                super::loop_budget(blob).map(|n| format!("_b{n}")).unwrap_or_default()
+            ))
     }
 
     fn header(ident: u64, blob: &[u8]) -> Vec<u8> {
@@ -522,8 +528,61 @@ fn compile_console_shader(blob: &[u8], stage: Stage, sampler_base: u32, windows:
     }) {
         t.hlsl = t.hlsl.replacen("    if (!xcl_live) discard;\n    return xo;\n}", &format!("    xo.t0 = {expr};\n    return xo;\n}}"), 1);
     }
+    // Crimson: this program's own loop budget (`loop_budget`)
+    if let Some(n) = loop_budget(blob) {
+        if t.hlsl.contains(LOOP_BUDGET_LINE) {
+            t.hlsl = t.hlsl.replacen(LOOP_BUDGET_LINE, &format!("static uint xcl_budget = {n}u;"), 1);
+            crate::xlog_info!("[SHADER] {:016x}: loop budget {n} (loop-budgets.txt / XCL_LOOP_BUDGET)", crate::gpu::shader::fnv64(blob));
+        }
+    }
     let dxil = dxc::compile_cached(&t.hlsl, "main", profile)?.0;
     Ok((Compiled { dxil, samplers: t.static_samplers }, false))
+}
+
+/// The translator's line that gives every invocation its loop iterations (`emit.rs`).
+const LOOP_BUDGET_LINE: &str = "static uint xcl_budget = 1u << 16;";
+
+/// Crimson: a console program's own loop budget, when it has one.
+///
+/// The translator lets one invocation run 65 536 loop iterations in all before its loops are
+/// left – far more than a working program needs, and cheap in a compute shader. A pixel shader
+/// whose loops do not end on the PC (an input they depend on is wrong) runs that budget for
+/// every pixel it covers, and the GPU does not come back from the draw. Until the input is
+/// right, such a program is given a smaller budget here.
+///
+/// `loop-budgets.txt` beside the DXIL cache, a program a line: `<hash> <iterations>` (`#`
+/// starts a comment; the hash as in the log's `[SHADER] ps <hash>` lines), and
+/// `XCL_LOOP_BUDGET=<hash>=<iterations>,…` on top of it (0: the translator's own again).
+/// Programs translated to HLSL only. The file stays on the user's machine: which programs a
+/// title has is not Crimson's to publish.
+pub fn loop_budget(blob: &[u8]) -> Option<u32> {
+    static BUDGETS: OnceLock<HashMap<u64, u32>> = OnceLock::new();
+    let budgets = BUDGETS.get_or_init(|| {
+        let file = std::fs::read_to_string(dxc::cache_dir().join("loop-budgets.txt")).unwrap_or_default();
+        let env = std::env::var("XCL_LOOP_BUDGET").unwrap_or_default();
+        let budgets = parse_loop_budgets(&file, &env);
+        if !budgets.is_empty() {
+            crate::xlog_info!("[SHADER] {} program(s) with a loop budget of their own (loop-budgets.txt, XCL_LOOP_BUDGET)", budgets.len());
+        }
+        budgets
+    });
+    if budgets.is_empty() {
+        return None;
+    }
+    budgets.get(&crate::gpu::shader::fnv64(blob)).copied().filter(|&n| n != 0)
+}
+
+fn parse_loop_budgets(file: &str, env: &str) -> HashMap<u64, u32> {
+    let mut budgets = HashMap::new();
+    let lines = file.lines().map(|l| l.split('#').next().unwrap_or(""));
+    for entry in lines.chain(env.split(',')) {
+        let mut words = entry.split(|c: char| c == '=' || c.is_whitespace()).filter(|w| !w.is_empty());
+        let (Some(hash), Some(n)) = (words.next(), words.next()) else { continue };
+        if let (Ok(hash), Ok(n)) = (u64::from_str_radix(hash, 16), n.parse::<u32>()) {
+            budgets.insert(hash, n);
+        }
+    }
+    budgets
 }
 
 /// Every `X_T.Sample(args)` of generated HLSL as `X_T.SampleLevel(args, 0.0f)`.
@@ -1713,6 +1772,15 @@ mod shader_cache_tests {
         assert_eq!(pub_second.ms, pub_first.ms);
 
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn loop_budgets_are_read_from_the_file_and_the_setting() {
+        let b = parse_loop_budgets("# a comment\n00000000000000ab 64  # why\n\nnot-a-hash 5\ncd 0\n", "ab=128,ef=7,,x");
+        assert_eq!(b.get(&0xab), Some(&128), "the setting wins");
+        assert_eq!(b.get(&0xcd), Some(&0));
+        assert_eq!(b.get(&0xef), Some(&7));
+        assert_eq!(b.len(), 3);
     }
 
     #[test]
