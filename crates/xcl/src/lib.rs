@@ -9,6 +9,7 @@
 pub mod brand;
 pub mod heapstat;
 pub mod memmap;
+pub mod valloc_trace;
 pub mod log;
 pub mod manifest;
 pub mod config;

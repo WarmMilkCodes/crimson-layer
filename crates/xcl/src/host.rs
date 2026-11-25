@@ -136,6 +136,10 @@ pub fn host_main(boot_path: &Path) -> i32 {
     crate::vfs::init(crate::vfs::Vfs::new(&boot.game_root, &boot.data_dir, mounts).own_folder(&crate::gpu::recomp::dxc::cache_dir()));
     let _ = std::fs::create_dir_all(boot.data_dir.join("temp"));
 
+    // `XCL_TRACE_VALLOC=1`: who makes the process's big allocations
+    if std::env::var_os("XCL_TRACE_VALLOC").is_some() {
+        crate::valloc_trace::install();
+    }
     if let Err(e) = crate::vfs_hooks::install() {
         crate::xlog_error!("VFS: not all hooks installed: {e}");
     }
