@@ -1,0 +1,69 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1280 420" role="img" aria-labelledby="t d">
+  <title id="t">How Crimson works</title>
+  <desc id="d">The game's x64 code runs natively; XCL provides the console libraries and recompiles RDNA2 shaders to DXIL; Crimson adds a tuning layer – memory gate, bounded pipeline waits, ray-tracing routing and 8 GB defaults – in front of Direct3D 12 and the PC GPU.</desc>
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#140608"/><stop offset="1" stop-color="#1e070d"/></linearGradient>
+    <linearGradient id="hot" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#e0183a"/><stop offset="1" stop-color="#ff7a3d"/></linearGradient>
+    <marker id="a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0 0 10 5 0 10z" fill="#ff5468"/></marker>
+  </defs>
+  <style>
+    text { font-family: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif }
+    .h { font-size: 20px; font-weight: 700; fill: #fff }
+    .s { font-size: 15px; fill: #ffd9de; fill-opacity: .7 }
+    .box { fill: #fff; fill-opacity: .04; stroke: #ff5468; stroke-opacity: .35; stroke-width: 1.5 }
+    .flow { stroke: #ff5468; stroke-width: 2.5; fill: none; marker-end: url(#a); stroke-dasharray: 7 7; animation: run 2.2s linear infinite }
+    @keyframes run { to { stroke-dashoffset: -28 } }
+    @media (prefers-reduced-motion: reduce) { .flow { animation: none } }
+  </style>
+  <rect width="1280" height="420" rx="24" fill="url(#bg)"/>
+
+  <!-- column 1: the game -->
+  <rect class="box" x="40" y="60" width="260" height="300" rx="16"/>
+  <text x="170" y="96" class="h" text-anchor="middle">Your game</text>
+  <text x="170" y="122" class="s" text-anchor="middle">unpacked files you own</text>
+  <g class="s" text-anchor="middle">
+    <text x="170" y="180">x64 game code</text>
+    <text x="170" y="230">RDNA2 shaders</text>
+    <text x="170" y="280">textures · audio · video</text>
+  </g>
+
+  <!-- column 2: XCL -->
+  <rect class="box" x="370" y="60" width="300" height="300" rx="16"/>
+  <text x="520" y="96" class="h" text-anchor="middle">XCL</text>
+  <text x="520" y="122" class="s" text-anchor="middle">the compatibility layer underneath</text>
+  <g class="s" text-anchor="middle">
+    <text x="520" y="180">runs natively + console libraries</text>
+    <text x="520" y="230">shader recompiler → DXIL</text>
+    <text x="520" y="280">memory · textures · DirectStorage</text>
+  </g>
+
+  <!-- column 3: Crimson -->
+  <rect x="740" y="60" width="270" height="300" rx="16" fill="url(#hot)" fill-opacity=".16" stroke="#ff5468" stroke-width="2"/>
+  <text x="875" y="96" class="h" text-anchor="middle">Crimson</text>
+  <text x="875" y="122" class="s" text-anchor="middle">tuning for mid-range PCs</text>
+  <g class="s" text-anchor="middle" style="fill-opacity:.9">
+    <text x="875" y="172">memory gate for compiles</text>
+    <text x="875" y="207">bounded pipeline waits</text>
+    <text x="875" y="242">ray-tracing shader routing</text>
+    <text x="875" y="277">8 GB / RDNA2 defaults</text>
+    <text x="875" y="312">driver-failure diagnostics</text>
+  </g>
+
+  <!-- column 4: PC -->
+  <rect class="box" x="1080" y="60" width="160" height="300" rx="16"/>
+  <text x="1160" y="96" class="h" text-anchor="middle">Your PC</text>
+  <g class="s" text-anchor="middle">
+    <text x="1160" y="180">CPU</text>
+    <text x="1160" y="230">Direct3D 12</text>
+    <text x="1160" y="280">GPU</text>
+  </g>
+
+  <path class="flow" d="M300 175H366"/>
+  <path class="flow" d="M300 225H366"/>
+  <path class="flow" d="M300 275H366"/>
+  <path class="flow" d="M670 225H736"/>
+  <path class="flow" d="M1010 225H1076"/>
+  <path class="flow" d="M520 60V34H1160V56" style="opacity:.55"/>
+  <text x="875" y="26" class="s" text-anchor="middle" style="font-size:13px">game code → CPU, natively</text>
+  <text x="640" y="400" class="s" text-anchor="middle">Game code goes straight to the CPU; graphics work passes through Crimson's layer on its way to the GPU.</text>
+</svg>

@@ -1,0 +1,73 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1280 380" role="img" aria-labelledby="t d">
+  <title id="t">Crimson</title>
+  <desc id="d">Crimson: a performance-focused fork of XCL, tuned to run Xbox Series X|S games you own at Series S level on mid-range PCs</desc>
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#0d0507"/>
+      <stop offset=".55" stop-color="#2a0710"/>
+      <stop offset="1" stop-color="#120509"/>
+    </linearGradient>
+    <linearGradient id="ink" x1="0" y1="0" x2="1" y2="0">
+      <stop offset="0" stop-color="#ff5468"/>
+      <stop offset=".6" stop-color="#e0183a"/>
+      <stop offset="1" stop-color="#ff9a4a"/>
+    </linearGradient>
+    <linearGradient id="gem" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#ff6b7c"/>
+      <stop offset=".5" stop-color="#d4123a"/>
+      <stop offset="1" stop-color="#6e0618"/>
+    </linearGradient>
+    <radialGradient id="glow" cx=".5" cy=".5" r=".5">
+      <stop offset="0" stop-color="#e0183a" stop-opacity=".55"/>
+      <stop offset="1" stop-color="#e0183a" stop-opacity="0"/>
+    </radialGradient>
+    <radialGradient id="glow2" cx=".5" cy=".5" r=".5">
+      <stop offset="0" stop-color="#ff8a3d" stop-opacity=".28"/>
+      <stop offset="1" stop-color="#ff8a3d" stop-opacity="0"/>
+    </radialGradient>
+    <pattern id="scan" width="6" height="6" patternUnits="userSpaceOnUse">
+      <path d="M0 5.5H6" stroke="#fff" stroke-opacity=".035"/>
+    </pattern>
+    <clipPath id="card"><rect width="1280" height="380" rx="28"/></clipPath>
+  </defs>
+  <style>
+    text { font-family: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif }
+    .pulse { animation: pulse 4s ease-in-out infinite; transform-origin: 230px 190px }
+    .line { fill: none; stroke: url(#ink); stroke-width: 2; stroke-linecap: round; stroke-dasharray: 4 18; opacity: .45; animation: run 7s linear infinite }
+    @keyframes pulse { 0%,100% { opacity: .75 } 50% { opacity: 1 } }
+    @keyframes run { to { stroke-dashoffset: -220 } }
+    @media (prefers-reduced-motion: reduce) { .pulse, .line { animation: none } }
+  </style>
+  <g clip-path="url(#card)">
+    <rect width="1280" height="380" fill="url(#bg)"/>
+    <rect width="1280" height="380" fill="url(#scan)"/>
+    <circle cx="230" cy="190" r="260" fill="url(#glow)" class="pulse"/>
+    <circle cx="1150" cy="60" r="260" fill="url(#glow2)"/>
+    <path class="line" d="M-20 300 C 300 250, 600 340, 1300 270"/>
+    <path class="line" d="M-20 90 C 400 140, 800 40, 1300 110" style="animation-duration:11s"/>
+    <!-- mark: a faceted crimson gem -->
+    <g transform="translate(230 190)">
+      <polygon points="0,-104 90,-34 56,96 -56,96 -90,-34" fill="url(#gem)"/>
+      <polygon points="0,-104 90,-34 0,-18" fill="#fff" fill-opacity=".22"/>
+      <polygon points="0,-104 -90,-34 0,-18" fill="#fff" fill-opacity=".08"/>
+      <polygon points="-90,-34 0,-18 -56,96" fill="#000" fill-opacity=".12"/>
+      <polygon points="90,-34 0,-18 56,96" fill="#000" fill-opacity=".25"/>
+      <polygon points="0,-18 56,96 -56,96" fill="#000" fill-opacity=".05"/>
+      <polygon points="0,-104 90,-34 56,96 -56,96 -90,-34" fill="none" stroke="#ffb3bd" stroke-opacity=".55" stroke-width="2"/>
+    </g>
+    <text x="400" y="178" font-size="104" font-weight="800" letter-spacing="-2" fill="#fff">Crimson</text>
+    <text x="404" y="226" font-size="27" fill="#ffd9de" fill-opacity=".92">Xbox Series X|S games you own, on a mid-range PC –</text>
+    <text x="404" y="262" font-size="27" fill="#ffd9de" fill-opacity=".92">tuned for Series S–level performance.</text>
+    <g font-size="17" font-weight="600">
+      <rect x="404" y="292" width="168" height="34" rx="17" fill="#e0183a" fill-opacity=".22" stroke="#ff5468" stroke-opacity=".6"/>
+      <text x="488" y="315" text-anchor="middle" fill="#ffc2ca">built on XCL</text>
+      <rect x="584" y="292" width="148" height="34" rx="17" fill="#e0183a" fill-opacity=".22" stroke="#ff5468" stroke-opacity=".6"/>
+      <text x="658" y="315" text-anchor="middle" fill="#ffc2ca">AMD RDNA2</text>
+      <rect x="744" y="292" width="140" height="34" rx="17" fill="#e0183a" fill-opacity=".22" stroke="#ff5468" stroke-opacity=".6"/>
+      <text x="814" y="315" text-anchor="middle" fill="#ffc2ca">8 GB VRAM</text>
+      <rect x="896" y="292" width="176" height="34" rx="17" fill="#ff8a3d" fill-opacity=".18" stroke="#ff9a4a" stroke-opacity=".6"/>
+      <text x="984" y="315" text-anchor="middle" fill="#ffd2b0">no CPU emulation</text>
+    </g>
+  </g>
+  <rect x="1" y="1" width="1278" height="378" rx="27" fill="none" stroke="#ff5468" stroke-opacity=".25" stroke-width="2"/>
+</svg>

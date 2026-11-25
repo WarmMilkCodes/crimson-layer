@@ -1,0 +1,43 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1280 300" role="img" aria-labelledby="t d">
+  <title id="t">Crimson progress</title>
+  <desc id="d">A newer retail game on an RX 6600 XT: boots, plays its intro and menus at 30 fps, and reaches the opening of its story with sound; the 3D world does not render yet and the GPU is lost a few minutes in. 17 ray-tracing pipelines that hung the driver now build.</desc>
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#140608"/><stop offset="1" stop-color="#22070e"/></linearGradient>
+    <linearGradient id="bar" x1="0" y1="0" x2="1" y2="0"><stop offset="0" stop-color="#e0183a"/><stop offset="1" stop-color="#ff9a4a"/></linearGradient>
+  </defs>
+  <style>
+    text { font-family: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif }
+    .lbl { font-size: 17px; fill: #ffd9de }
+    .dim { font-size: 15px; fill: #ffd9de; fill-opacity: .55 }
+    .num { font-size: 34px; font-weight: 800; fill: #fff }
+  </style>
+  <rect width="1280" height="300" rx="24" fill="url(#bg)" stroke="#ff5468" stroke-opacity=".25" stroke-width="2"/>
+  <text x="48" y="56" font-size="24" font-weight="700" fill="#fff">A newer retail game · RX 6600 XT 8 GB · Ryzen 5 5500 · 32 GB</text>
+  <text x="48" y="84" class="dim">Where it gets to today (not playable yet)</text>
+
+  <!-- stages -->
+  <g transform="translate(48 120)">
+    <rect x="0" y="18" width="1184" height="6" rx="3" fill="#fff" fill-opacity=".08"/>
+    <rect x="0" y="18" width="760" height="6" rx="3" fill="url(#bar)"/>
+    <g>
+      <circle cx="0" cy="21" r="13" fill="#e0183a"/><path d="M-6 21l4 4 8-8" stroke="#fff" stroke-width="3" fill="none" stroke-linecap="round"/>
+      <text x="0" y="62" class="lbl" text-anchor="start">Boots</text>
+      <circle cx="296" cy="21" r="13" fill="#e8303c"/><path d="M290 21l4 4 8-8" stroke="#fff" stroke-width="3" fill="none" stroke-linecap="round"/>
+      <text x="296" y="62" class="lbl" text-anchor="middle">Intro + menus</text>
+      <circle cx="592" cy="21" r="13" fill="#f2553f"/><path d="M586 21l4 4 8-8" stroke="#fff" stroke-width="3" fill="none" stroke-linecap="round"/>
+      <text x="592" y="62" class="lbl" text-anchor="middle">Loads the story</text>
+      <circle cx="888" cy="21" r="13" fill="none" stroke="#ff9a4a" stroke-width="3"/><circle cx="888" cy="21" r="5" fill="#ff9a4a"/>
+      <text x="888" y="62" class="lbl" text-anchor="middle">Renders the world</text>
+      <circle cx="1184" cy="21" r="13" fill="none" stroke="#fff" stroke-opacity=".3" stroke-width="3"/>
+      <text x="1184" y="62" class="lbl" text-anchor="end">Playable</text>
+    </g>
+  </g>
+
+  <!-- numbers -->
+  <g transform="translate(48 238)">
+    <text x="0" y="0" class="num">30 fps</text><text x="0" y="26" class="dim">intro and menus, steady</text>
+    <text x="290" y="0" class="num">~7 min</text><text x="290" y="26" class="dim">before the GPU is lost in game</text>
+    <text x="580" y="0" class="num">0</text><text x="580" y="26" class="dim">out-of-memory crashes since the memory gate</text>
+    <text x="910" y="0" class="num">17</text><text x="910" y="26" class="dim">RT pipelines that used to hang the driver</text>
+  </g>
+</svg>
