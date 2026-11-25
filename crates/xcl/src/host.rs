@@ -47,8 +47,14 @@ pub fn host_main(boot_path: &Path) -> i32 {
                 [p, e, d, x, f[0], f[1], f[2], f[3], r, b >> 20, fail]
             };
             let mut last = snap();
+            let mut round = 0u32;
             loop {
                 std::thread::sleep(std::time::Duration::from_secs(2));
+                // every 30 s: which allocations of the process grew (`memmap`)
+                round += 1;
+                if round % 15 == 0 {
+                    crate::memmap::census();
+                }
                 let now = snap();
                 let d: Vec<u64> = now.iter().zip(last).map(|(a, b)| a - b).collect();
                 crate::xlog_info!(
@@ -69,8 +75,9 @@ pub fn host_main(boot_path: &Path) -> i32 {
                 let (pages, page_pools) = crate::hle::d3d12x::vram::page_bytes();
                 let mb = |b: u64| b >> 20;
                 let (heap, _) = crate::heapstat::heap();
+                let (standins, built) = crate::hle::d3d12x::pso_async::pending_counts();
                 crate::xlog_info!(
-                    "memory: {} MB committed by the process, {} MB of it XCL's heap; video memory {} MB local, {} MB non-local; target pages {} MB (pools {} MB); arenas {} MB in use, {} MB made; sparse pools {} MB ({} MB mapped)",
+                    "memory: {} MB committed by the process, {} MB of it XCL's heap, {standins} stand-in pipelines + {built} built; video memory {} MB local, {} MB non-local; target pages {} MB (pools {} MB); arenas {} MB in use, {} MB made; sparse pools {} MB ({} MB mapped)",
                     mb(private as u64),
                     mb(heap),
                     mb(local),

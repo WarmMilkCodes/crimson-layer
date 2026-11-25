@@ -343,6 +343,15 @@ fn submit_as(standin: usize, compute: bool, job: Job, send: bool, key: u64) {
     }
 }
 
+/// (stand-in pipelines the title holds whose real pipeline is not built, built ones among the
+/// pending) – `XCL_ACTIVITY`: each stand-in is a pipeline of its own in the driver
+pub fn pending_counts() -> (usize, usize) {
+    let g = PENDING.lock().unwrap();
+    let Some(m) = g.as_ref() else { return (0, 0) };
+    let built = m.values().filter(|p| p.real.load(Ordering::Relaxed) != 0).count();
+    (m.len() - built, built)
+}
+
 /// The keys of the pipelines earlier runs used (`used-pipelines.txt` beside the DXIL cache):
 /// what `xcl shaders --precompile --used-only` builds.
 pub fn earlier_used_keys() -> std::collections::HashSet<u64> {
