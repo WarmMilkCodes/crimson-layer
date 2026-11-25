@@ -23,10 +23,42 @@ pub enum Part {
     FrameWait = 4,
     /// a bind waits for a pipeline still being built
     PipelineWait = 5,
+    // the rest of a submission, piece by piece
+    /// textures in title memory the CPU wrote since, uploaded again
+    TexRefresh = 6,
+    /// the title's lists mapped to the PC lists recorded for them
+    ListMap = 7,
+    /// scratch copies of the lists just submitted
+    Scratch = 8,
+    /// allocators and fences of the lists just submitted
+    Fences = 9,
+    /// GPU writes into sparse windows read back
+    SparseReadback = 10,
+    /// writes the CPU does after the GPU
+    CpuWrites = 11,
+    /// the states the lists leave textures kept in step in
+    TexSubmitted = 12,
+    /// the presenter's and the watchers' look at the lists
+    NoteExecute = 13,
 }
 
-const PARTS: usize = 6;
-pub const NAMES: [&str; PARTS] = ["submits", "driver in submits", "present", "flip", "frame-event waits", "pipeline waits"];
+const PARTS: usize = 14;
+pub const NAMES: [&str; PARTS] = [
+    "submits",
+    "driver in submits",
+    "present",
+    "flip",
+    "frame-event waits",
+    "pipeline waits",
+    "texture refresh",
+    "list mapping",
+    "scratch copies",
+    "allocators and fences",
+    "sparse readback",
+    "CPU writes",
+    "texture states",
+    "submit watchers",
+];
 
 static NANOS: [AtomicU64; PARTS] = [const { AtomicU64::new(0) }; PARTS];
 static CALLS: [AtomicU64; PARTS] = [const { AtomicU64::new(0) }; PARTS];

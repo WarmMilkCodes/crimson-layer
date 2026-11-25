@@ -7123,8 +7123,13 @@ unsafe extern "system" fn q_execute_command_lists(this: *mut c_void, n: u32, lis
     // (`pso_async::title_held`)
     let _in_pc = super::pso_async::pc_call();
     let _timed = super::frametime::timed(super::frametime::Part::Submit);
+    use super::frametime::{timed, Part};
     // textures in title memory the CPU wrote since: uploaded again first
-    super::title_textures::refresh(this);
+    {
+        let _t = timed(Part::TexRefresh);
+        super::title_textures::refresh(this);
+    }
+    let map_timed = timed(Part::ListMap);
     // console-shaped lists run as the PC lists they were translated into (split title lists expand
     // into all of their recorded PC segments in exact chronological order)
     let mut mapped: Vec<*mut c_void> = Vec::with_capacity(n as usize);
@@ -7136,20 +7141,37 @@ unsafe extern "system" fn q_execute_command_lists(this: *mut c_void, n: u32, lis
         }
     }
     super::list_x::note_queue_for_lists(this as usize, &mapped);
+    drop(map_timed);
     super::list_x::execute_with_waits_on(this, &mapped, |chunk| {
         let _ = super::alloc_pool::note_resubmits(this, chunk);
         {
             let _timed = super::frametime::timed(super::frametime::Part::DriverSubmit);
             f(this, chunk.len() as u32, chunk.as_ptr());
         }
-        super::list_x::copy_scratch_submitted(this, chunk);
-        super::alloc_pool::executed(this, chunk);
-        super::list_x::signal_write64_fences(this, chunk);
-        super::list_x::readback_sparse_writes(this, chunk);
-        super::list_x::cpu_writes_after(this, chunk);
+        {
+            let _t = timed(Part::Scratch);
+            super::list_x::copy_scratch_submitted(this, chunk);
+        }
+        {
+            let _t = timed(Part::Fences);
+            super::alloc_pool::executed(this, chunk);
+            super::list_x::signal_write64_fences(this, chunk);
+        }
+        {
+            let _t = timed(Part::SparseReadback);
+            super::list_x::readback_sparse_writes(this, chunk);
+        }
+        {
+            let _t = timed(Part::CpuWrites);
+            super::list_x::cpu_writes_after(this, chunk);
+        }
     });
     // the next uploads into textures kept in step start from the states these lists leave
-    super::title_textures::submitted(&mapped);
+    {
+        let _t = timed(Part::TexSubmitted);
+        super::title_textures::submitted(&mapped);
+    }
+    let _t = timed(Part::NoteExecute);
     super::present::note_execute(this, &mapped);
     stop_if_device_removed();
 }

@@ -955,9 +955,14 @@ fn slow_frame_dump_due() -> bool {
     if after == 0 {
         return false;
     }
+    // (a loading screen is slow too, with a dispatch or two a frame: the frames wanted are
+    // those of a scene, with hundreds)
+    static LAST_DISPATCHES: AtomicU64 = AtomicU64::new(0);
+    let dispatches = super::bind::activity().1;
+    let busy = dispatches - LAST_DISPATCHES.swap(dispatches, Ordering::Relaxed) >= 100;
     let now = START.get_or_init(Instant::now).elapsed().as_millis() as u64 + 1;
     let last = LAST_MS.swap(now, Ordering::Relaxed);
-    last != 0 && now - last >= after && TAKEN.fetch_add(1, Ordering::Relaxed) < 40
+    last != 0 && busy && now - last >= after && TAKEN.fetch_add(1, Ordering::Relaxed) < 40
 }
 
 /// Frames shown so far.
