@@ -174,10 +174,59 @@ pub fn describe_address(addr: usize) -> String {
             let n = GetModuleFileNameW(h, buf.as_mut_ptr(), 260) as usize;
             let full = String::from_utf16_lossy(&buf[..n]);
             let name = full.rsplit('\\').next().unwrap_or(&full).to_string();
-            return module_offset(&name, h as usize, addr);
+            let at = module_offset(&name, h as usize, addr);
+            // Crimson: an address in this program itself with its function's name
+            if h as usize == own_base() {
+                if let Some(sym) = own_symbol(addr) {
+                    return format!("{at} [{sym}]");
+                }
+            }
+            return at;
         }
     }
     format!("{addr:#x}")
+}
+
+/// The base of this executable.
+fn own_base() -> usize {
+    static B: std::sync::OnceLock<usize> = std::sync::OnceLock::new();
+    *B.get_or_init(|| unsafe { windows_sys::Win32::System::LibraryLoader::GetModuleHandleW(std::ptr::null()) as usize })
+}
+
+/// The function at `addr` of this executable, from its .pdb beside it (dbghelp; None without
+/// one, or with `XCL_SYMBOLS=0`). A crash in XCL's own code named only `crimson.exe+0x…`.
+fn own_symbol(addr: usize) -> Option<String> {
+    use windows_sys::Win32::System::Diagnostics::Debug::{SymFromAddr, SymInitialize, SymSetOptions, SYMBOL_INFO};
+    use windows_sys::Win32::System::Threading::GetCurrentProcess;
+    static READY: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    // dbghelp is single-threaded
+    static ONE: Mutex<()> = Mutex::new(());
+    let _one = ONE.try_lock().ok()?;
+    unsafe {
+        let process = GetCurrentProcess();
+        let ready = *READY.get_or_init(|| {
+            if std::env::var("XCL_SYMBOLS").is_ok_and(|v| v.trim() == "0") {
+                return false;
+            }
+            // undecorated names, symbols loaded when first asked for
+            SymSetOptions(0x2 | 0x4);
+            SymInitialize(process, std::ptr::null(), 1) != 0
+        });
+        if !ready {
+            return None;
+        }
+        let mut buf = [0u64; (std::mem::size_of::<SYMBOL_INFO>() + 512) / 8 + 1];
+        let info = buf.as_mut_ptr() as *mut SYMBOL_INFO;
+        (*info).SizeOfStruct = std::mem::size_of::<SYMBOL_INFO>() as u32;
+        (*info).MaxNameLen = 500;
+        let mut displacement = 0u64;
+        if SymFromAddr(process, addr as u64, &mut displacement, info) == 0 {
+            return None;
+        }
+        let len = ((*info).NameLen as usize).min(500);
+        let name = std::slice::from_raw_parts(std::ptr::addr_of!((*info).Name) as *const u8, len);
+        Some(String::from_utf8_lossy(name).into_owned())
+    }
 }
 
 #[cfg(test)]
