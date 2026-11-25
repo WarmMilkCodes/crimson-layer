@@ -181,6 +181,9 @@ fn queue() -> &'static Mutex<mpsc::Sender<Arc<Pending>>> {
             let _ = std::thread::Builder::new().name(format!("xcl-pso-{k}")).stack_size(64 << 20).spawn(move || loop {
                 let next = rx.lock().unwrap().recv();
                 let Ok(p) = next else { return };
+                // memory first (`memgate`), with the job still in place: a bind that needs it
+                // meanwhile takes it and builds it itself
+                let _room = crate::memgate::admit(crate::memgate::Work::Title);
                 // (None: a bind took it and builds it itself)
                 let job = p.job.lock().unwrap().take();
                 if let Some(job) = job {
@@ -366,6 +369,7 @@ fn preload() -> Option<&'static Preload> {
                     if p.orphan.load(Ordering::Acquire) {
                         continue;
                     }
+                    let _room = crate::memgate::admit(crate::memgate::Work::Title);
                     // (None: a bind took it and builds it itself)
                     let job = p.job.lock().unwrap().take();
                     if let Some(job) = job {

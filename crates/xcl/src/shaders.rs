@@ -1146,7 +1146,7 @@ impl Pipelines {
     }
 
     /// The compute pipeline of `c` (made and released).
-    fn make(&self, c: &recomp::pso::Compiled) {
+    fn make(&self, c: &recomp::pso::Compiled, name: &str) {
         use windows::Win32::Graphics::Direct3D12::*;
         let key: Vec<u32> = c.samplers.iter().flat_map(|(w, cmp)| w.iter().copied().chain([*cmp as u32])).collect();
         let rs = {
@@ -1158,8 +1158,11 @@ impl Pipelines {
                         g.insert(key, rs.clone());
                         rs
                     }
-                    Err(_) => {
-                        self.refused.fetch_add(1, Ordering::Relaxed);
+                    Err(e) => {
+                        if self.refused.fetch_add(1, Ordering::Relaxed) < 5 {
+                            let why = unsafe { self.dev.GetDeviceRemovedReason() };
+                            eprintln!("  refused (root signature) {name}: {e} (device: {why:?})");
+                        }
                         return;
                     }
                 },
@@ -1206,7 +1209,15 @@ impl Pipelines {
         drop(std::mem::ManuallyDrop::into_inner(desc.pRootSignature));
         let done = match r {
             Ok(_) => self.made.fetch_add(1, Ordering::Relaxed) + 1,
-            Err(_) => self.refused.fetch_add(1, Ordering::Relaxed) + 1,
+            Err(e) => {
+                let n = self.refused.fetch_add(1, Ordering::Relaxed);
+                if n < 5 {
+                    let why = unsafe { self.dev.GetDeviceRemovedReason() };
+                    let free = crate::memgate::available().map_or(String::new(), |(p, c)| format!(", free RAM {} MB, free commit {} MB", p >> 20, c >> 20));
+                    eprintln!("  refused {name} ({} B DXIL, from cache {}): {e} (device: {why:?}{free})", c.dxil.len(), cached.is_some());
+                }
+                n + 1
+            }
         };
         if done % 25 == 0 {
             eprintln!("  pipelines: {} made, {} refused", self.made.load(Ordering::Relaxed), self.refused.load(Ordering::Relaxed));
@@ -1235,6 +1246,8 @@ fn precompile(input: &Input, limit: usize, windows: u32, split: Option<bool>, on
     let threads = recomp::dxc::compile_threads() + 2;
     // no title runs: only a little commit is kept free besides the compiles
     recomp::dxc::set_memory_reserve(2);
+    // background work, the DXC workers and the driver's compile threads included
+    crate::memgate::background_process();
     // VS / PS: the 32-lane form wherever the GPU can run 32-lane waves (`pso::graphics_wave32`);
     // `--split` sets both
     let graphics_split = split.unwrap_or_else(recomp::runner::graphics_wave32);
@@ -1261,13 +1274,16 @@ fn precompile(input: &Input, limit: usize, windows: u32, split: Option<bool>, on
                     done.fetch_add(1, Ordering::Relaxed);
                     continue;
                 }
+                // translation, DXC and the driver's build of this record: only with memory to
+                // spare (`memgate`), so a precompile shares the machine instead of exhausting it
+                let _room = crate::memgate::admit(crate::memgate::Work::Precompile { bytes: blob.len() });
                 // a compute program as a title's pipeline translates it (`pso::console_to_dxil_in`):
                 // into the translation cache too, so the title does not translate it again
                 if sh.fssm.iter().any(|f| matches!(recomp::interface(&blob, &sh, f), Some(recomp::Mode::Compute(_)))) {
                     match recomp::pso::console_to_dxil_in(&blob, recomp::pso::Stage::Compute, 0, split, windows) {
                         Ok(c) => {
                             if let Some(p) = pipelines {
-                                p.make(&c);
+                                p.make(&c, &name);
                             }
                             compiled.fetch_add(1, Ordering::Relaxed)
                         }
@@ -1329,6 +1345,10 @@ fn precompile(input: &Input, limit: usize, windows: u32, split: Option<bool>, on
             });
         }
     });
+    let (waits, waited) = crate::memgate::stats();
+    if waits > 0 {
+        println!("waited for memory {waits} times, {:.0} s in all (keeps {} MB free: XCL_MEM_RESERVE_MB)", waited as f64 / 1e3, crate::memgate::reserve() >> 20);
+    }
     println!(
         "compiled {}, already cached {}, errors {}, skipped (GS – paired at pipeline creation) {}, time {:.1} s",
         compiled.into_inner(),
