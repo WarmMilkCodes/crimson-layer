@@ -108,6 +108,11 @@ unsafe fn present_x_frame(queue: *mut c_void, plane_count: u32, planes: *const u
             }
         }
     }
+    // Crimson, until the planes are composed: as a Series S with no plane chosen, plane 0 while
+    // a scene is drawn (a retail game's world is there, its menus and loading screens on plane 1)
+    static CHOSEN: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    let chosen = *CHOSEN.get_or_init(|| std::env::var_os("XCL_PRESENT_PLANE").is_some());
+    let want = if !chosen && plane_count == 2 && crate::state::config().is_series_s() && scene_running() { 0 } else { want };
     let idx = want.min(plane_count.saturating_sub(1) as usize);
     let planes = planes.add(0x48 * idx);
     let count = (planes.add(8) as *const u32).read_unaligned();
@@ -963,6 +968,29 @@ fn slow_frame_dump_due() -> bool {
     let now = START.get_or_init(Instant::now).elapsed().as_millis() as u64 + 1;
     let last = LAST_MS.swap(now, Ordering::Relaxed);
     last != 0 && busy && now - last >= after && TAKEN.fetch_add(1, Ordering::Relaxed) < 40
+}
+
+/// Crimson: whether the title draws a scene now, going by its compute work: a hundred
+/// dispatches or more a frame for three frames running (menus and loading screens have one or
+/// two); over again after thirty frames without. Called once a frame shown.
+fn scene_running() -> bool {
+    static LAST_DISPATCHES: AtomicU64 = AtomicU64::new(0);
+    static BUSY_RUN: AtomicU64 = AtomicU64::new(0);
+    static QUIET_RUN: AtomicU64 = AtomicU64::new(0);
+    static ON: AtomicU64 = AtomicU64::new(0);
+    let dispatches = super::bind::activity().1;
+    if dispatches - LAST_DISPATCHES.swap(dispatches, Ordering::Relaxed) >= 100 {
+        QUIET_RUN.store(0, Ordering::Relaxed);
+        if BUSY_RUN.fetch_add(1, Ordering::Relaxed) + 1 >= 3 && ON.swap(1, Ordering::Relaxed) == 0 {
+            crate::xlog_info!("D3D12.X: a scene is drawn – its plane (0) is shown from here");
+        }
+    } else {
+        BUSY_RUN.store(0, Ordering::Relaxed);
+        if QUIET_RUN.fetch_add(1, Ordering::Relaxed) + 1 >= 30 && ON.swap(0, Ordering::Relaxed) == 1 {
+            crate::xlog_info!("D3D12.X: no scene is drawn any more – the chosen plane is shown again");
+        }
+    }
+    ON.load(Ordering::Relaxed) != 0
 }
 
 /// Frames shown so far.

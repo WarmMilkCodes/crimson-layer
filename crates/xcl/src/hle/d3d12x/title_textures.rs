@@ -741,6 +741,8 @@ unsafe fn refresh_once(queue: *mut c_void) {
         dirty.len()
     });
     super::sparse::note_watch(watch_t0.elapsed(), dirty_len);
+    super::frametime::add(super::frametime::Part::WatchScan, watch_t0.elapsed());
+    super::frametime::watched(ranges.len(), ranges.iter().map(|r| r.1).sum(), dirty_len);
     if super::present::trace_frame() {
         // every 600th look: what the CPU's view of a few textures holds now (does the title's
         // data reach the address at all, and is the texture still kept in step?)
@@ -772,6 +774,7 @@ unsafe fn refresh_once(queue: *mut c_void) {
     }
     // the title's own memory: what the CPU wrote goes to its video memory first
     if let Some(q) = ID3D12CommandQueue::from_raw_borrowed(&queue) {
+        let _t = super::frametime::timed(super::frametime::Part::SparseUpload);
         DIRTY_BUF.with(|dcell| {
             let dirty = dcell.borrow();
             super::sparse::before_execute(q, &dirty, page as usize);
@@ -782,10 +785,14 @@ unsafe fn refresh_once(queue: *mut c_void) {
         let (p, b) = super::present::counters();
         p.max(b)
     };
-    recheck_streamed_unwatched(&ranges, recheck_frame);
+    {
+        let _t = super::frametime::timed(super::frametime::Part::StreamRecheck);
+        recheck_streamed_unwatched(&ranges, recheck_frame);
+    }
     if dirty_len == 0 && PENDING.load(Ordering::Relaxed) == 0 {
         return;
     }
+    let _t = super::frametime::timed(super::frametime::Part::TexUpload);
     // textures made since the last submit and those with a written page; a reference each
     // while they are uploaded
     let todo: Vec<(ID3D12Resource, Upload)> = DIRTY_BUF.with(|dcell| {

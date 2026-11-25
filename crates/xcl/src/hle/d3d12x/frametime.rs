@@ -40,9 +40,18 @@ pub enum Part {
     TexSubmitted = 12,
     /// the presenter's and the watchers' look at the lists
     NoteExecute = 13,
+    // the texture refresh, piece by piece
+    /// asking Windows which pages of the watched memory the CPU wrote (GetWriteWatch)
+    WatchScan = 14,
+    /// written pages and reused tiles sent to video memory
+    SparseUpload = 15,
+    /// unwatched textures looked at again
+    StreamRecheck = 16,
+    /// textures with written pages found and uploaded
+    TexUpload = 17,
 }
 
-const PARTS: usize = 14;
+const PARTS: usize = 18;
 pub const NAMES: [&str; PARTS] = [
     "submits",
     "driver in submits",
@@ -58,6 +67,10 @@ pub const NAMES: [&str; PARTS] = [
     "CPU writes",
     "texture states",
     "submit watchers",
+    "write-watch scan",
+    "written pages to video memory",
+    "unwatched textures",
+    "texture uploads",
 ];
 
 static NANOS: [AtomicU64; PARTS] = [const { AtomicU64::new(0) }; PARTS];
@@ -72,6 +85,15 @@ pub struct Timed(Part, Instant);
 /// Times the caller's scope as `part`.
 pub fn timed(part: Part) -> Timed {
     Timed(part, Instant::now())
+}
+
+/// `part` took `t` (where the caller has measured it already).
+pub fn add(part: Part, t: std::time::Duration) {
+    let i = part as usize;
+    let ns = t.as_nanos() as u64;
+    NANOS[i].fetch_add(ns, Ordering::Relaxed);
+    CALLS[i].fetch_add(1, Ordering::Relaxed);
+    WORST[i].fetch_max(ns, Ordering::Relaxed);
 }
 
 impl Drop for Timed {
@@ -91,6 +113,17 @@ pub fn gpu_behind(behind: u64) {
     BACKLOG[2].fetch_max(behind, Ordering::Relaxed);
 }
 
+/// looks, ranges asked about, MB asked about, pages found written
+static WATCH: [AtomicU64; 4] = [const { AtomicU64::new(0) }; 4];
+
+/// One look for CPU writes: `ranges` ranges of `bytes` in all, `dirty` pages found written.
+pub fn watched(ranges: usize, bytes: usize, dirty: usize) {
+    WATCH[0].fetch_add(1, Ordering::Relaxed);
+    WATCH[1].fetch_add(ranges as u64, Ordering::Relaxed);
+    WATCH[2].fetch_add((bytes >> 20) as u64, Ordering::Relaxed);
+    WATCH[3].fetch_add(dirty as u64, Ordering::Relaxed);
+}
+
 /// The report since the last call (one log line), or None when nothing was timed.
 pub fn report() -> Option<String> {
     let mut parts = Vec::new();
@@ -107,6 +140,13 @@ pub fn report() -> Option<String> {
     let most = BACKLOG[2].swap(0, Ordering::Relaxed);
     if frames != 0 {
         parts.push(format!("GPU behind by {:.1} frames on average when one is shown (most {})", sum as f64 / frames as f64, most));
+    }
+    let looks = WATCH[0].swap(0, Ordering::Relaxed);
+    let ranges = WATCH[1].swap(0, Ordering::Relaxed);
+    let mb = WATCH[2].swap(0, Ordering::Relaxed);
+    let dirty = WATCH[3].swap(0, Ordering::Relaxed);
+    if looks != 0 {
+        parts.push(format!("{looks} looks for CPU writes, each over {} ranges and {} MB, {} written pages found", ranges / looks, mb / looks, dirty / looks));
     }
     (!parts.is_empty()).then(|| parts.join("; "))
 }
