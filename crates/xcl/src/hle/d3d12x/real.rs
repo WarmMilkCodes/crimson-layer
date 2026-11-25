@@ -7122,6 +7122,7 @@ unsafe extern "system" fn q_execute_command_lists(this: *mut c_void, n: u32, lis
     // own work in the submission. Where that takes long, it is not the title's time
     // (`pso_async::title_held`)
     let _in_pc = super::pso_async::pc_call();
+    let _timed = super::frametime::timed(super::frametime::Part::Submit);
     // textures in title memory the CPU wrote since: uploaded again first
     super::title_textures::refresh(this);
     // console-shaped lists run as the PC lists they were translated into (split title lists expand
@@ -7137,7 +7138,10 @@ unsafe extern "system" fn q_execute_command_lists(this: *mut c_void, n: u32, lis
     super::list_x::note_queue_for_lists(this as usize, &mapped);
     super::list_x::execute_with_waits_on(this, &mapped, |chunk| {
         let _ = super::alloc_pool::note_resubmits(this, chunk);
-        f(this, chunk.len() as u32, chunk.as_ptr());
+        {
+            let _timed = super::frametime::timed(super::frametime::Part::DriverSubmit);
+            f(this, chunk.len() as u32, chunk.as_ptr());
+        }
         super::list_x::copy_scratch_submitted(this, chunk);
         super::alloc_pool::executed(this, chunk);
         super::list_x::signal_write64_fences(this, chunk);

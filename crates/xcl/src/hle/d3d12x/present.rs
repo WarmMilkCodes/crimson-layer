@@ -781,6 +781,7 @@ unsafe fn present_now(min_interval: Duration, frame: Option<(usize, usize)>) {
         }
     }
     let _reset = Reset;
+    let _timed = super::frametime::timed(super::frametime::Part::Present);
     let (queue, src, mut guard) = if let Some((queue, res)) = frame {
         let raw = res as *mut c_void;
         let Some(src) = ID3D12Resource::from_raw_borrowed(&raw) else { return };
@@ -840,7 +841,8 @@ unsafe fn present_now(min_interval: Duration, frame: Option<(usize, usize)>) {
     let b1 = [transition(&bb, D3D12_RESOURCE_STATE_PRESENT, D3D12_RESOURCE_STATE_COPY_DEST)];
     p.list.ResourceBarrier(&b1);
     p.list.CopyResource(&bb, &src);
-    let due = frame_dump_due();
+    let slow = slow_frame_dump_due();
+    let due = frame_dump_due() || slow;
     let mut dumps = Vec::new();
     if due {
         if let Some((buffer, footprint)) = readback_copy(&p.list, &src, &desc) {
@@ -881,6 +883,8 @@ unsafe fn present_now(min_interval: Duration, frame: Option<(usize, usize)>) {
     q.ExecuteCommandLists(&[Some(cl)]);
     p.copy_source = Some(src);
     p.dumps = dumps;
+    // how many earlier frames the GPU has not finished (`frametime`)
+    super::frametime::gpu_behind(p.value.saturating_sub(p.fence.GetCompletedValue()));
     p.value += 1;
     if let Err(e) = q.Signal(&p.fence, p.value) {
         // The copy is already submitted. Without its signal, keep its resources and allocator.
@@ -889,7 +893,11 @@ unsafe fn present_now(min_interval: Duration, frame: Option<(usize, usize)>) {
         crate::xlog_error!("present: submit copy: {e}");
         return;
     }
-    if let Err(e) = sc.Present(0, DXGI_PRESENT(0)).ok() {
+    let flip = {
+        let _timed = super::frametime::timed(super::frametime::Part::Flip);
+        sc.Present(0, DXGI_PRESENT(0)).ok()
+    };
+    if let Err(e) = flip {
         let e = fence::api_error(&p.dev, "Present", e);
         p.disabled = matches!(&e, FenceError::Removed(_));
         crate::xlog_error!("present: {e}");
@@ -930,6 +938,26 @@ fn frame_dump_due() -> bool {
         Err(_) => 0,
     });
     every > 0 && PRESENTS.load(Ordering::Relaxed) % every == 20.min(every - 1)
+}
+
+/// Crimson: `XCL_FRAME_DUMP_SLOW=1` (or `=ms`): a frame shown 250 ms (or `ms`) or more after
+/// the one before it is written like `XCL_FRAME_DUMP`'s, the first 40 of them – what a title
+/// running at a few frames a second shows, without the thousands of frames of its loading.
+fn slow_frame_dump_due() -> bool {
+    static AFTER_MS: std::sync::OnceLock<u64> = std::sync::OnceLock::new();
+    static START: std::sync::OnceLock<Instant> = std::sync::OnceLock::new();
+    static LAST_MS: AtomicU64 = AtomicU64::new(0);
+    static TAKEN: AtomicU64 = AtomicU64::new(0);
+    let after = *AFTER_MS.get_or_init(|| match std::env::var("XCL_FRAME_DUMP_SLOW") {
+        Ok(v) => v.trim().parse().ok().filter(|&n| n > 1).unwrap_or(250),
+        Err(_) => 0,
+    });
+    if after == 0 {
+        return false;
+    }
+    let now = START.get_or_init(Instant::now).elapsed().as_millis() as u64 + 1;
+    let last = LAST_MS.swap(now, Ordering::Relaxed);
+    last != 0 && now - last >= after && TAKEN.fetch_add(1, Ordering::Relaxed) < 40
 }
 
 /// Frames shown so far.

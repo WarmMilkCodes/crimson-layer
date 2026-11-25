@@ -18,6 +18,7 @@ pub mod dxgi_device;
 mod cpu_writes;
 mod fence_x;
 pub mod frame;
+pub mod frametime;
 pub mod gpuwork;
 pub mod guard;
 mod late_release;

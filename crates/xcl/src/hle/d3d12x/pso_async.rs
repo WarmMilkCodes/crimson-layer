@@ -884,6 +884,7 @@ fn resolve_wait_for(pso: usize, budget: Option<std::time::Duration>) -> usize {
     }
     // (the title's thread is held from here until the pipeline is built or the budget is over)
     let _held = (!*p.done.lock().unwrap()).then(Held::new);
+    let _timed = _held.is_some().then(|| super::frametime::timed(super::frametime::Part::PipelineWait));
     if let Some(budget) = budget {
         return resolve_within(&p, pso, budget);
     }
