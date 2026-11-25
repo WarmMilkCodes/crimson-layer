@@ -67,6 +67,26 @@ fn compute_code(blob: &[u8]) -> Option<Vec<u8>> {
     Some(f.data.get(p.offset..p.offset.checked_add(p.len)?)?.to_vec())
 }
 
+/// Crimson: whether the compute shader `blob` has ray instructions (the console GPU's BVH
+/// intersection, which the PC runs as a loop of ordinary shader code for every ray). False for
+/// anything that cannot be read.
+pub fn traces_rays(blob: &[u8]) -> bool {
+    let Some(code) = compute_code(blob) else { return false };
+    let mut off = 0;
+    while off + 4 <= code.len() {
+        // (data among the code does not decode: the scan goes on a word later)
+        let Ok(d) = rdna2::decode(&code[off..], off as u64) else {
+            off += 4;
+            continue;
+        };
+        off += d.len.max(4);
+        if d.inst.name.to_ascii_lowercase().contains("bvh") {
+            return true;
+        }
+    }
+    false
+}
+
 /// Console code a compute program needs to be `big`: 16 KiB, about 4 000 instructions. The
 /// programs a retail title's world start waits on longest are 73 – 118 KiB each (22 – 172 s
 /// apiece in an RDNA2 driver); what it runs every frame from its first one is far smaller.

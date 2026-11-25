@@ -4010,6 +4010,12 @@ fn runtime_pso_cap() -> usize {
     *V.get_or_init(|| env_count(std::env::var("XCL_RUNTIME_PSO_MAX_KB").ok().as_deref(), 1024, 0, usize::MAX >> 10) << 10)
 }
 
+/// `XCL_RAY_TRACING=0`: no pipelines for compute programs with ray instructions.
+fn ray_tracing_off() -> bool {
+    static V: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *V.get_or_init(|| std::env::var("XCL_RAY_TRACING").is_ok_and(|v| v.trim() == "0"))
+}
+
 /// Whether `bytes` of DXIL are over the cap (logged once a record).
 fn over_runtime_cap(bytes: usize, record: u64) -> bool {
     let cap = runtime_pso_cap();
@@ -4361,6 +4367,19 @@ unsafe fn translated_compute_pso_once(this: *mut c_void, f: PsoFn, desc: *const 
     }
     // in the background, a few at a time and within the commit headroom the program asks for
     let record = crate::gpu::shader::fnv64(cs);
+    // Crimson, `XCL_RAY_TRACING=0`: programs with ray instructions get no pipeline – their
+    // dispatches are skipped. A test of what hangs the GPU when a retail game's world starts:
+    // with every pipeline built and nothing skipped, the device was lost seconds after the
+    // first ~1 800 dispatches of the world (the emulated BVH traversal is a loop a ray).
+    if ray_tracing_off() && crate::gpu::effects::traces_rays(cs) {
+        static SEEN: Mutex<BTreeSet<u64>> = Mutex::new(BTreeSet::new());
+        let mut seen = SEEN.lock().unwrap();
+        if seen.insert(record) && seen.len() <= 40 {
+            crate::xlog_warn!("D3D12.X: XCL_RAY_TRACING=0 – the compute PSO of record {record:016x} ({} B DXIL) has ray instructions: no pipeline, its dispatches are skipped (#{})", dxil.len(), seen.len());
+        }
+        note_translation_error("a ray tracing compute PSO was left out (XCL_RAY_TRACING=0)".to_string());
+        return Some(Err(()));
+    }
     // Crimson: a program over the running title's cap with no blob of an earlier build is not
     // given to the driver here (`runtime_pso_cap`)
     if cached.is_none() && over_runtime_cap(dxil.len(), record) {
