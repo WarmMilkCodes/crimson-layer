@@ -85,8 +85,23 @@ unsafe fn present_x_frame(queue: *mut c_void, plane_count: u32, planes: *const u
             crate::xlog_info!("D3D12.X: PresentX now with {plane_count} plane(s): {words:x?}");
         }
     }
+    // `XCL_PRESENT_PLANE=N`: show plane N instead of plane 0 (the planes are 0x48 bytes apart,
+    // as the logged words show: a UI plane over the game's). A test of what each plane holds –
+    // the console's display composes them; this shows one.
+    static PLANE: std::sync::OnceLock<usize> = std::sync::OnceLock::new();
+    let want = *PLANE.get_or_init(|| std::env::var("XCL_PRESENT_PLANE").ok().and_then(|v| v.trim().parse().ok()).unwrap_or(0));
+    let idx = want.min(plane_count.saturating_sub(1) as usize);
+    let planes = planes.add(0x48 * idx);
     let count = (planes.add(8) as *const u32).read_unaligned();
     let list = (planes.add(0x10) as *const usize).read_unaligned();
+    {
+        static SEEN: AtomicU64 = AtomicU64::new(u64::MAX);
+        if SEEN.swap(idx as u64, Ordering::Relaxed) != idx as u64 && crate::gpu::shader::readable(list, 8) {
+            let r = (list as *const usize).read_unaligned();
+            let d = ID3D12Resource::from_raw_borrowed(&(r as *mut c_void)).map(|x| x.GetDesc()).map(|d| (d.Width, d.Height, d.Format.0));
+            crate::xlog_info!("D3D12.X: presenting plane {idx} of {plane_count}: {r:#x} {d:?}");
+        }
+    }
     if count == 0 || !crate::gpu::shader::readable(list, 8) || !enabled() {
         return;
     }
