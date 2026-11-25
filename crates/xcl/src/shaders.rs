@@ -1242,6 +1242,12 @@ impl Pipelines {
     }
 }
 
+fn wanted_name(name: &str) -> bool {
+    static ONLY: std::sync::OnceLock<Vec<String>> = std::sync::OnceLock::new();
+    let only = ONLY.get_or_init(|| std::env::var("XCL_PIPELINE_ONLY").map_or(Vec::new(), |v| v.split(',').map(|s| s.trim().to_string()).filter(|s| !s.is_empty()).collect()));
+    only.is_empty() || only.iter().any(|s| name.contains(s.as_str()))
+}
+
 fn precompile(input: &Input, limit: usize, windows: u32, split: Option<bool>, only: Option<&str>, pipelines: bool, t0: std::time::Instant) -> i32 {
     let pipelines = if pipelines {
         match Pipelines::new() {
@@ -1287,7 +1293,9 @@ fn precompile(input: &Input, limit: usize, windows: u32, split: Option<bool>, on
                 let (name, blob) = input.get(i);
                 let Some(blob) = blob else { continue };
                 let Some(sh) = xbox::parse(&blob) else { continue };
-                if only.is_some_and(|o| !sh.stage.eq_ignore_ascii_case(o)) {
+                // `XCL_PIPELINE_ONLY=a,b`: only the programs whose name holds one of these (a test
+                // of a few programs without translating the rest)
+                if only.is_some_and(|o| !sh.stage.eq_ignore_ascii_case(o)) || !wanted_name(&name) {
                     done.fetch_add(1, Ordering::Relaxed);
                     continue;
                 }
