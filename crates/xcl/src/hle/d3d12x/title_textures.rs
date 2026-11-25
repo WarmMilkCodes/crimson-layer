@@ -1416,14 +1416,22 @@ unsafe fn subresources_on(picked: &[(usize, &xg::Texture)], threads: usize) -> V
     out
 }
 
-/// The title's bytes at `at`: where they are when all of them are readable (a copy first cost
-/// as much as the detile of a video frame), else read page run by page run.
+/// The title's bytes at `at`: where they are in the coherent window (committed as a whole for
+/// the process's life: a copy first cost as much as the detile of a video frame), else a copy
+/// made without faulting – pages that are not there read as zeros (`copy_committed_region`: no
+/// `VirtualQuery`, the copy itself finds them). Crimson: memory elsewhere was used in place
+/// once `readable` said so – and a retail game run as a Series S gives its streaming pages
+/// back while their textures are detiled on another thread: the check passed, the pages went,
+/// and the detile faulted (an access violation in its copy, every few runs).
 unsafe fn title_bytes(at: usize, len: usize) -> std::borrow::Cow<'static, [u8]> {
-    if crate::gpu::shader::readable(at, len) {
-        std::borrow::Cow::Borrowed(std::slice::from_raw_parts(at as *const u8, len))
-    } else {
-        std::borrow::Cow::Owned(read_committed(at, len))
+    if crate::gpu::uma::get().is_some_and(|u| u.in_committed_window(at, len)) {
+        return std::borrow::Cow::Borrowed(std::slice::from_raw_parts(at as *const u8, len));
     }
+    let mut out = vec![0u8; len];
+    if at.checked_add(len).is_some() {
+        copy_committed_region(at, out.as_mut_ptr(), len);
+    }
+    std::borrow::Cow::Owned(out)
 }
 
 /// Every subresource (D3D12 order) of a texture from the title's memory at `va`.
@@ -1775,10 +1783,10 @@ mod tests {
         assert!(LIST_NOTES.lock().unwrap().get(&l1).is_none());
     }
 
-    /// The title's bytes are used where they are when all of them are readable, and read with the
-    /// pages that are not committed as zeros otherwise – the same bytes either way.
+    /// The title's bytes outside the coherent window are a copy (the title may give the pages
+    /// back while they are read), with the pages that are not committed as zeros.
     #[test]
-    fn title_bytes_are_used_in_place_when_all_are_readable() {
+    fn title_bytes_outside_the_coherent_window_are_copied() {
         use windows_sys::Win32::System::Memory::{VirtualAlloc, VirtualFree, MEM_COMMIT, MEM_RELEASE, MEM_RESERVE, PAGE_READWRITE};
         unsafe {
             let base = VirtualAlloc(std::ptr::null(), 3 << 12, MEM_RESERVE, PAGE_READWRITE) as usize;
@@ -1788,8 +1796,7 @@ mod tests {
                 std::ptr::write_bytes((base + (page << 12)) as *mut u8, 0xA0 + page as u8, 1 << 12);
             }
             let whole = title_bytes(base, 1 << 12);
-            assert!(matches!(whole, std::borrow::Cow::Borrowed(_)), "a committed page is not copied");
-            assert_eq!(whole.as_ptr() as usize, base);
+            assert!(matches!(whole, std::borrow::Cow::Owned(_)), "memory the title can give back is read in place");
             assert!(whole.iter().all(|&b| b == 0xA0));
             let holed = title_bytes(base, 3 << 12);
             assert!(matches!(holed, std::borrow::Cow::Owned(_)), "a range with a reserved page is read");
