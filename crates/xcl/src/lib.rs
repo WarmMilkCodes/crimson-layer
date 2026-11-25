@@ -7,6 +7,7 @@
 
 #[macro_use]
 pub mod brand;
+pub mod heapstat;
 pub mod log;
 pub mod manifest;
 pub mod config;
