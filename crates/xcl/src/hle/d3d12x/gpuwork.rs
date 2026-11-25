@@ -82,7 +82,10 @@ pub fn left_out(kind: u8, pso: usize) -> bool {
     if records.is_empty() && !*indirect {
         return false;
     }
-    let out = (*indirect && kind == 1) || NAMES.lock().unwrap().as_ref().and_then(|m| m.get(&pso)).is_some_and(|(r, _)| records.contains(r));
+    // (a graphics pipeline by the hash of its console VS or PS)
+    let out = (*indirect && kind == 1)
+        || NAMES.lock().unwrap().as_ref().and_then(|m| m.get(&pso)).is_some_and(|(r, _)| records.contains(r))
+        || GRAPHICS.lock().unwrap().as_ref().and_then(|m| m.get(&pso)).is_some_and(|(vs, ps)| records.contains(vs) || records.contains(ps));
     if out {
         static N: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
         let n = N.fetch_add(1, std::sync::atomic::Ordering::Relaxed) + 1;

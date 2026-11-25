@@ -471,6 +471,10 @@ pub(super) unsafe extern "system" fn draw_instanced(this: *mut c_void, vertices:
             return;
         }
         super::list_x::sync_title_buffers(this, None, first_vertex, vertices, if first_instance != 0 { instances.max(2) } else { instances });
+        if super::gpuwork::left_out(3, super::pso_async::resolve(with(this, |s| s.pso))) {
+            count(DRAWS_SKIPPED);
+            return;
+        }
         super::gpuwork::on_list(this as usize);
         super::gpuwork::note(3, super::pso_async::resolve(with(this, |s| s.pso)), [vertices, instances, first_vertex]);
         list.DrawInstanced(vertices, instances, first_vertex, first_instance);
@@ -500,6 +504,10 @@ pub(super) unsafe fn prepare_indexed_draw(
 ) -> Option<ID3D12GraphicsCommandList> {
     DRAW_ARGS.with(|d| d.set((true, indices, instances, first_index, base_vertex)));
     let list = graphics_bound(this)?;
+    if super::gpuwork::left_out(4, super::pso_async::resolve(with(this, |s| s.pso))) {
+        count(DRAWS_SKIPPED);
+        return None;
+    }
     super::gpuwork::on_list(this as usize);
     super::gpuwork::note(4, super::pso_async::resolve(with(this, |s| s.pso)), [indices, instances, first_index]);
     Some(list)
