@@ -436,7 +436,10 @@ unsafe fn show_compiling(hwnd: HWND) {
         }
         last.is_some_and(|t| t.elapsed() < Duration::from_secs(2))
     };
-    let title = format!("{} – {} | {fps:.1} FPS", crate::brand::NAME, window_name());
+    // Crimson: how long the window has been up (from its first title, as it is made)
+    static OPENED: std::sync::OnceLock<Instant> = std::sync::OnceLock::new();
+    let up = now.duration_since(*OPENED.get_or_init(|| now)).as_secs();
+    let title = format!("{} – {} | {:02}:{:02}:{:02} | {fps:.1} FPS", crate::brand::NAME, window_name(), up / 3600, up / 60 % 60, up % 60);
     let text = if recent {
         let queued = if queued > 0 { format!(", {queued} pipelines queued") } else { String::new() };
         let failed = if failed > 0 { format!(", {failed} failed") } else { String::new() };
