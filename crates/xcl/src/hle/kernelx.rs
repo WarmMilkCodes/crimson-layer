@@ -1446,9 +1446,12 @@ pub unsafe extern "system" fn XMemMapPhysicalPages(va: *mut c_void, n: usize, ar
 }
 
 /// `BOOL XMemMapPhysicalPagesScatter(void** addresses, SIZE_T count, ULONG64* pages)`: one 64 KiB
-/// page at each address (page 0: the address is unmapped)
+/// page at each address (page 0: the address is unmapped). No `pages` at all unmaps every
+/// address: a retail title gives its pools' pages back that way when it runs as a Series S
+/// (a batch of addresses, count, NULL) and stops at a breakpoint of its own when the call
+/// fails – it was refused as an invalid parameter.
 pub unsafe extern "system" fn XMemMapPhysicalPagesScatter(addresses: *const *mut c_void, n: usize, pages: *mut u64) -> BOOL {
-    if addresses.is_null() || pages.is_null() {
+    if addresses.is_null() {
         fnd::SetLastError(fnd::ERROR_INVALID_PARAMETER);
         return 0;
     }
@@ -1458,7 +1461,19 @@ pub unsafe extern "system" fn XMemMapPhysicalPagesScatter(addresses: *const *mut
     }
     let mut g = AWAY.lock().unwrap();
     let away = g.get_or_insert_with(Away::default);
-    let ok = (0..n).all(|i| !map_pages(away, *addresses.add(i), 1, pages.add(i) as *mut usize).is_null());
+    static UNMAPS: AtomicUsize = AtomicUsize::new(0);
+    if pages.is_null() && UNMAPS.fetch_add(1, Ordering::Relaxed) == 0 {
+        crate::xlog_info!("kernelx: XMemMapPhysicalPagesScatter without pages – {n} addresses unmapped (the first such call)");
+    }
+    let ok = (0..n).all(|i| {
+        let at = *addresses.add(i);
+        if pages.is_null() {
+            // (nothing at no address)
+            at.is_null() || !map_pages(away, at, 1, std::ptr::null_mut()).is_null()
+        } else {
+            !map_pages(away, at, 1, pages.add(i) as *mut usize).is_null()
+        }
+    });
     give_back_homes(away);
     ok as BOOL
 }
