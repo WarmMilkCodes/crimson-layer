@@ -292,6 +292,14 @@ impl Lw {
         };
         let base = name.trim_start_matches("image_");
         if base == "bvh_intersect_ray" || base == "bvh64_intersect_ray" {
+            // Crimson: a program with ray instructions goes through the HLSL path. AMD's driver
+            // (RX 6600 XT, RDNA2) loses the device on loading this translator's form of a retail
+            // title's ray tracing programs – their pipelines from the HLSL path are made fine.
+            // `XCL_DIRECT_DXIL_BVH=1`: this translator for them too.
+            static BVH: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+            if !*BVH.get_or_init(|| std::env::var("XCL_DIRECT_DXIL_BVH").is_ok_and(|v| v.trim() == "1")) {
+                return Err(format!("{name}: ray instructions go through the HLSL path (XCL_DIRECT_DXIL_BVH=1: here)"));
+            }
             let wide = base == "bvh64_intersect_ray";
             let r = |lw: &mut Lw, j: u64| lw.vreg(addr_reg(j));
             let node = r(self, 0);
