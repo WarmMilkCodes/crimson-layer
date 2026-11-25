@@ -3,6 +3,7 @@
 </p>
 
 <p align="center">
+  <a href="https://discord.gg/bbdTtcVKnR"><img alt="Discord: join the server" src="https://img.shields.io/badge/Discord-join%20the%20server-e0183a?style=for-the-badge&logo=discord&logoColor=white"></a>
   <a href="https://github.com/xcl-dev/xcl"><img alt="Built on XCL" src="https://img.shields.io/badge/built%20on-XCL-e0183a?style=for-the-badge"></a>
   <a href="LICENSE"><img alt="License: GPL-2.0-only" src="https://img.shields.io/badge/license-GPL--2.0--only-e0183a?style=for-the-badge"></a>
   <img alt="Status: experimental" src="https://img.shields.io/badge/status-experimental-ff8a3d?style=for-the-badge">
@@ -19,7 +20,8 @@
   <b><a href="#recommended-settings">Settings</a></b> ·
   <b><a href="#what-crimson-changes">What Crimson changes</a></b> ·
   <b><a href="#known-issues">Known issues</a></b> ·
-  <b><a href="#upstream">Upstream</a></b>
+  <b><a href="#upstream">Upstream</a></b> ·
+  <b><a href="https://discord.gg/bbdTtcVKnR">Discord</a></b>
 </p>
 
 # Crimson
@@ -30,7 +32,7 @@ Crimson is a performance-focused fork of [XCL](https://github.com/xcl-dev/xcl), 
 > Crimson works only on unpacked game files you already own. Like XCL, it does not download, decrypt or unpack game packages and contains nothing for circumventing DRM. The repository holds no console SDK code, keys or game data.
 
 > [!WARNING]
-> Crimson is early and experimental. There are no releases yet, nothing is playable yet, and first launches are long. Progress is posted as it lands.
+> Crimson is early and experimental. There are no releases yet, nothing is playable yet, and first launches are long. Progress is posted as it lands – follow along on [Discord](https://discord.gg/bbdTtcVKnR).
 
 <p align="center"><img src="assets/readme/divider.svg" width="100%" alt=""></p>
 
@@ -199,6 +201,10 @@ Optional: put the shader caches on a roomy drive with `setx XCL_DATA_ROOT D:\xcl
   powercfg /setacvalueindex SCHEME_CURRENT SUB_PCIEXPRESS ASPM 0
   powercfg /setactive SCHEME_CURRENT
   ```
+
+## Community
+
+Questions, test results and progress updates: **[join the Crimson Discord](https://discord.gg/bbdTtcVKnR)**. Bugs and code changes go in this repository's issues and pull requests.
 
 ## Upstream
 
