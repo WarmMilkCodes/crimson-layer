@@ -85,11 +85,29 @@ unsafe fn present_x_frame(queue: *mut c_void, plane_count: u32, planes: *const u
             crate::xlog_info!("D3D12.X: PresentX now with {plane_count} plane(s): {words:x?}");
         }
     }
-    // `XCL_PRESENT_PLANE=N`: show plane N instead of plane 0 (the planes are 0x48 bytes apart,
-    // as the logged words show: a UI plane over the game's). A test of what each plane holds –
-    // the console's display composes them; this shows one.
+    // The plane shown (the planes are 0x48 bytes apart; the console's display composes them,
+    // this shows one): plane 0 – but plane 1 for a title run as a Series S: a retail game's
+    // picture is on plane 1 there (plane 0 stays black), and on plane 0 as a Series X.
+    // `XCL_PRESENT_PLANE=N` chooses. Composing the planes is the real answer.
     static PLANE: std::sync::OnceLock<usize> = std::sync::OnceLock::new();
-    let want = *PLANE.get_or_init(|| std::env::var("XCL_PRESENT_PLANE").ok().and_then(|v| v.trim().parse().ok()).unwrap_or(0));
+    let want = *PLANE.get_or_init(|| {
+        std::env::var("XCL_PRESENT_PLANE").ok().and_then(|v| v.trim().parse().ok()).unwrap_or(if crate::state::config().is_series_s() { 1 } else { 0 })
+    });
+    {
+        // every plane's resource, once a plane count: what a later composition has to work with
+        static DESCRIBED: AtomicU64 = AtomicU64::new(0);
+        if DESCRIBED.swap(plane_count as u64, Ordering::Relaxed) != plane_count as u64 {
+            for k in 0..plane_count as usize {
+                let pl = planes.add(0x48 * k);
+                let l = (pl.add(0x10) as *const usize).read_unaligned();
+                if crate::gpu::shader::readable(l, 8) {
+                    let r = (l as *const usize).read_unaligned();
+                    let d = ID3D12Resource::from_raw_borrowed(&(r as *mut c_void)).map(|x| x.GetDesc()).map(|d| (d.Width, d.Height, d.Format.0));
+                    crate::xlog_info!("D3D12.X: plane {k} of {plane_count}: {r:#x} {d:?}");
+                }
+            }
+        }
+    }
     let idx = want.min(plane_count.saturating_sub(1) as usize);
     let planes = planes.add(0x48 * idx);
     let count = (planes.add(8) as *const u32).read_unaligned();
