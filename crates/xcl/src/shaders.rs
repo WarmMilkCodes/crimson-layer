@@ -1173,6 +1173,17 @@ impl Pipelines {
             CS: D3D12_SHADER_BYTECODE { pShaderBytecode: c.dxil.as_ptr() as *const _, BytecodeLength: c.dxil.len() },
             ..Default::default()
         };
+        // `XCL_PIPELINE_SKIP=a,b`: programs whose name holds one of these are not made (a
+        // program that takes the device down); `XCL_PIPELINE_TRACE=1`: each one named before
+        // the driver gets it – with `XCL_PIPELINE_THREADS=1` the last name before a lost device
+        // is the program that lost it
+        static SKIP: std::sync::OnceLock<Vec<String>> = std::sync::OnceLock::new();
+        let skip = SKIP.get_or_init(|| std::env::var("XCL_PIPELINE_SKIP").map_or(Vec::new(), |v| v.split(',').map(|s| s.trim().to_string()).filter(|s| !s.is_empty()).collect()));
+        if skip.iter().any(|s| name.contains(s.as_str())) {
+            eprintln!("  skipped (XCL_PIPELINE_SKIP) {name}");
+            return;
+        }
+        let trace = std::env::var_os("XCL_PIPELINE_TRACE").is_some();
         {
             let mut n = self.running.0.lock().unwrap();
             while *n >= self.most {
@@ -1183,6 +1194,12 @@ impl Pipelines {
         use crate::hle::d3d12x::real::driver_cache;
         let path = driver_cache::path(&c.dxil, desc.Flags.0);
         let cached = path.as_deref().and_then(driver_cache::load);
+        if trace {
+            use std::io::Write;
+            let mut e = std::io::stderr().lock();
+            let _ = writeln!(e, "  making {name} ({} B DXIL, cached blob {})", c.dxil.len(), cached.is_some());
+            let _ = e.flush();
+        }
         let from_cache = cached.as_ref().and_then(|bytes| {
             desc.CachedPSO = D3D12_CACHED_PIPELINE_STATE { pCachedBlob: bytes.as_ptr().cast(), CachedBlobSizeInBytes: bytes.len() };
             unsafe { self.dev.CreateComputePipelineState::<ID3D12PipelineState>(&desc) }.ok()
