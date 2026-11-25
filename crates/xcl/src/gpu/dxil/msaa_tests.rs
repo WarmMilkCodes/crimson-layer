@@ -219,7 +219,7 @@ fn gpu_direct_msaa_image_loads() {
             let want = if s < 4 { (x + 4 * y + 16 * s) as f32 } else { 0.0 };
             assert_eq!(fl(14 + k as usize), want, "lane {l} image_msaa_load sample {s}");
         }
-        assert_eq!(&v[18..22], &[4, 4, 1, 1], "lane {l} resinfo 2D MSAA");
+        assert_eq!(&v[18..22], &[4, 4, 0, 1], "lane {l} resinfo 2D MSAA (depth 0, as RDNA2)");
         let (z, f2) = ((l / 16 % 3) as u32, (l % 2) as u32);
         assert_eq!(v[22], 1000 * z + 100 * f2 + x + 4 * y, "lane {l} image_load 2D MSAA array");
         for k in 0..4u32 {
@@ -251,4 +251,95 @@ fn direct_msaa_store_is_rejected() {
     code.extend(encode("S_ENDPGM", "ENC_SOPP", &[], None).unwrap());
     let e = runner::direct_kernel(&code, true).unwrap_err();
     assert!(e.contains("MSAA"), "{e}");
+}
+
+/// Regression guard for an AMD DXIL compiler (`amdxc64.dll`) null-pointer dereference
+/// (`0xc0000005`): within any basic block, `dx.op.getDimensions` on a dynamically indexed
+/// heap `Texture2DMS` / `Texture2DMSArray` must not precede `dx.op.textureLoad`.
+#[test]
+fn direct_msaa_loads_precede_get_dimensions() {
+    let mut code = Vec::new();
+    code.extend(mimg("IMAGE_LOAD", &[("VDATA", 10), ("VADDR", 0), ("SRSRC", 4), ("DMASK", 0xF), ("DIM", 6), ("UNORM", 1)]));
+    code.extend(mimg("IMAGE_MSAA_LOAD", &[("VDATA", 14), ("VADDR", 0), ("SRSRC", 4), ("DMASK", 0x8), ("DIM", 6), ("UNORM", 1)]));
+    code.extend(mimg("IMAGE_GET_RESINFO", &[("VDATA", 18), ("VADDR", 5), ("SRSRC", 4), ("DMASK", 0xF), ("DIM", 6)]));
+    code.extend(mimg("IMAGE_LOAD", &[("VDATA", 22), ("VADDR", 30), ("SRSRC", 6), ("DMASK", 0x1), ("DIM", 7), ("UNORM", 1)]));
+    code.extend(mimg("IMAGE_MSAA_LOAD", &[("VDATA", 24), ("VADDR", 30), ("SRSRC", 6), ("DMASK", 0x1), ("DIM", 7), ("UNORM", 1)]));
+    code.extend(mimg("IMAGE_GET_RESINFO", &[("VDATA", 40), ("VADDR", 5), ("SRSRC", 6), ("DMASK", 0xF), ("DIM", 7)]));
+    code.extend(mimg("IMAGE_MSAA_LOAD", &[("VDATA", 44), ("VADDR", 0), ("SRSRC", 4), ("DMASK", 0x2), ("DIM", 6), ("UNORM", 1), ("D16", 1)]));
+    code.extend(encode("S_ENDPGM", "ENC_SOPP", &[], None).unwrap());
+    let k = runner::direct_kernel_full(&code, true).expect("direct translation");
+    check(&k.dxil);
+    let dis = validate::disassemble(&k.dxil).expect("disassemble");
+    let mut in_fn = false;
+    let mut seen_get_dims = false;
+    let mut load_blocks = 0usize;
+    let mut saw_load_in_block = false;
+    for line in dis.lines() {
+        let t = line.trim();
+        if t.starts_with("define ") {
+            in_fn = true;
+            seen_get_dims = false;
+            saw_load_in_block = false;
+        } else if in_fn && t == "}" {
+            if saw_load_in_block {
+                load_blocks += 1;
+            }
+            in_fn = false;
+        } else if !in_fn {
+            continue;
+        } else if t.starts_with("; <label>:") {
+            if saw_load_in_block {
+                load_blocks += 1;
+            }
+            seen_get_dims = false;
+            saw_load_in_block = false;
+        } else if t.contains("call ") && t.contains("@dx.op.getDimensions(") {
+            seen_get_dims = true;
+        } else if t.contains("call ") && t.contains("@dx.op.textureLoad.") {
+            assert!(!seen_get_dims, "dx.op.getDimensions preceded dx.op.textureLoad in the same basic block:\n{dis}");
+            saw_load_in_block = true;
+        }
+    }
+    assert!(load_blocks >= 15, "expected MSAA textureLoad blocks across all format branches, saw {load_blocks}");
+}
+
+/// `image_get_resinfo` with `D16=1` packs two 16-bit dimensions per VGPR and preserves the
+/// trailing VGPRs for both standard 2D and MSAA textures (matching HLSL).
+#[test]
+fn gpu_direct_image_get_resinfo_d16() {
+    let mut code = Vec::new();
+    // T# 0: 2D 64x32 R32_UINT (s[16:23], SRSRC 4); T# 1: 2D MSAA array 4x4x3 (s[24:31], SRSRC 6)
+    code.extend(mimg("IMAGE_GET_RESINFO", &[("VDATA", 0), ("VADDR", 10), ("SRSRC", 4), ("DMASK", 0xF), ("DIM", 1), ("D16", 1)]));
+    code.extend(mimg("IMAGE_GET_RESINFO", &[("VDATA", 4), ("VADDR", 10), ("SRSRC", 6), ("DMASK", 0xF), ("DIM", 7), ("D16", 1)]));
+    code.extend(encode("S_ENDPGM", "ENC_SOPP", &[], None).unwrap());
+    if !gpu_ready() {
+        return;
+    }
+    let tex2d = TestTexture {
+        dim: TexDim::D2,
+        format: DXGI_FORMAT_R32_UINT,
+        width: 64,
+        height: 32,
+        depth: 1,
+        texel_bytes: 4,
+        data: vec![0u8; 64 * 32 * 4],
+        uav: false,
+    };
+    let mut st = KernelState::default();
+    st.sgpr[16..24].copy_from_slice(&tsharp(0, 20, 9));
+    st.sgpr[24..32].copy_from_slice(&tsharp(2, 20, 15));
+    for r in &mut st.vgpr {
+        r[2] = 0xDEAD_BEEF;
+        r[3] = 0xCAFE_BABE;
+        r[6] = 0x1122_3344;
+        r[7] = 0x5566_7788;
+        r[10] = 0; // mip 0
+    }
+    let r = run_direct(&code, &st, &[tex2d, ms_array_u32()]);
+    assert_eq!(r.vgpr[0][0], 64 | (32 << 16), "2D D16 resinfo v0: {:#x}", r.vgpr[0][0]);
+    assert_eq!(r.vgpr[0][1], 1 << 16, "2D D16 resinfo v1 (depth 0, mips 1): {:#x}", r.vgpr[0][1]);
+    assert_eq!((r.vgpr[0][2], r.vgpr[0][3]), (0xDEAD_BEEF, 0xCAFE_BABE), "2D D16 resinfo clobbered v2/v3");
+    assert_eq!(r.vgpr[0][4], 4 | (4 << 16), "MSAA array D16 resinfo v4: {:#x}", r.vgpr[0][4]);
+    assert_eq!(r.vgpr[0][5], 3 | (1 << 16), "MSAA array D16 resinfo v5: {:#x}", r.vgpr[0][5]);
+    assert_eq!((r.vgpr[0][6], r.vgpr[0][7]), (0x1122_3344, 0x5566_7788), "MSAA array D16 resinfo clobbered v6/v7");
 }
