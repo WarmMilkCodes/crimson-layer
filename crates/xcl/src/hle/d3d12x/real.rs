@@ -3996,6 +3996,34 @@ fn compile_slots(bytes: usize) -> &'static Slots {
     if bytes >= GIANT_DRIVER_COMPILE { &GIANT_COMPILES } else { &BIG_COMPILES }
 }
 
+/// Crimson: the DXIL size above which a running title's compute pipeline is not compiled by
+/// the driver when no blob of an earlier build exists (`XCL_RUNTIME_PSO_MAX_KB`, default 1024;
+/// 0: no cap). AMD's compiler took a 2.2 MB program of a retail game's past six minutes
+/// without finishing, its heap growing ~75 MB a second to 40 GB on a 32 GB machine – in every
+/// run again, since a compile that never ends leaves no blob. Such a program is left to
+/// `shaders --precompile` (which has the time, and nothing else running); until its blob
+/// exists its dispatches are skipped, as after a driver's refusal.
+fn runtime_pso_cap() -> usize {
+    static V: std::sync::OnceLock<usize> = std::sync::OnceLock::new();
+    *V.get_or_init(|| env_count(std::env::var("XCL_RUNTIME_PSO_MAX_KB").ok().as_deref(), 1024, 0, usize::MAX >> 10) << 10)
+}
+
+/// Whether `bytes` of DXIL are over the cap (logged once a record).
+fn over_runtime_cap(bytes: usize, record: u64) -> bool {
+    let cap = runtime_pso_cap();
+    if cap == 0 || bytes <= cap {
+        return false;
+    }
+    static SEEN: Mutex<BTreeSet<u64>> = Mutex::new(BTreeSet::new());
+    if SEEN.lock().unwrap().insert(record) {
+        crate::xlog_warn!(
+            "D3D12.X: the compute PSO of record {record:016x} ({bytes} B DXIL) is over the runtime cap of {} KB and has no driver blob: left to the precompile, its dispatches are skipped (XCL_RUNTIME_PSO_MAX_KB)",
+            cap >> 10
+        );
+    }
+    true
+}
+
 /// A driver compile of `bytes` of DXIL through `build`: a huge one on an `xcl-pso*` worker
 /// waits for its slot first (`big_compile_turn`; not a title thread's, nor one the title waits
 /// for). Logs its time, size and whether it was gated.
@@ -4331,6 +4359,12 @@ unsafe fn translated_compute_pso_once(this: *mut c_void, f: PsoFn, desc: *const 
     }
     // in the background, a few at a time and within the commit headroom the program asks for
     let record = crate::gpu::shader::fnv64(cs);
+    // Crimson: a program over the running title's cap with no blob of an earlier build is not
+    // given to the driver here (`runtime_pso_cap`)
+    if cached.is_none() && over_runtime_cap(dxil.len(), record) {
+        note_translation_error("a compute PSO over the runtime cap was left to the precompile".to_string());
+        return Some(Err(()));
+    }
     let (mut hr, mut in_driver) = driver_compile_identified(
         "compute",
         dxil.len(),
@@ -4345,6 +4379,10 @@ unsafe fn translated_compute_pso_once(this: *mut c_void, f: PsoFn, desc: *const 
             driver_cache::note(false, disk.as_deref());
         }
         copy.CachedPSO = D3D12_CACHED_PIPELINE_STATE::default();
+        if over_runtime_cap(dxil.len(), record) {
+            note_translation_error("a compute PSO over the runtime cap was left to the precompile".to_string());
+            return Some(Err(()));
+        }
         let (retried, took) = driver_compile_identified(
             "compute retry",
             dxil.len(),
