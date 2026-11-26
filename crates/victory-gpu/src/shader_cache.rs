@@ -76,6 +76,8 @@ fn key(translator: &str, encoding: &[u8], limit: u32) -> [u8; 32] {
     h.update(translator.as_bytes());
     h.update(blake3::hash(encoding).as_bytes());
     h.update(&limit.to_le_bytes());
+    // The clean-up passes are part of the translation too.
+    h.update(&victory_shader::emit::shader_opt().to_le_bytes());
     *h.finalize().as_bytes()
 }
 

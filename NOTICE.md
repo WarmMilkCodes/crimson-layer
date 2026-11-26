@@ -21,6 +21,9 @@ All changes by WarmMilkCodes, 2026-11-26, unless noted.
 | `crates/victory-gpu/src/host.rs` | The window's title reads `Crimson | time since the window opened | fps, ms/frame, draws/frame` |
 | `apps/victory/Cargo.toml`, `apps/victory/src/main.rs`, `apps/victory/tests/*.rs` | The program is `crimson.exe` |
 | `xtask/src/policy.rs` | `.svg` files (hand-written vector graphics for the README) are allowed |
+| `crates/victory-gpu/src/host.rs` | State preludes come from one pool of the host's instead of one per list (an AMD driver's 2 GiB of command memory filled, and the device was removed); the window's title also shows the time in the world; crash reports name registers that point into memory the layer wrote lately |
+| `crates/victory-gpu/src/pipeline.rs`, `crates/victory-gpu/src/draw.rs` | The console's ray-tracing structure builder is off unless `VICTORY_BVH_BUILDER=1`; `VICTORY_INDIRECT_UNBOUNDED` (a measurement) |
+| `crates/victory-shader/src/emit/bitcode/opt.rs` (new), `crates/victory-shader/src/emit/bitcode.rs`, `crates/victory-shader/src/emit/mod.rs`, `crates/victory-shader/src/emit/shader.rs`, `crates/victory-gpu/src/shader_cache.rs`, `crates/victory-gpu/src/pipeline/library.rs` | Clean-up passes over each translated shader before it is written (`VICTORY_SHADER_OPT`; `0` turns them off). `opt.rs` is taken whole from [VIctory-7900XTX](https://github.com/avatarmanz/VIctory-7900XTX) (GPL-3.0-or-later; its passes after [fxceless/victory-fork](https://github.com/fxceless/victory-fork)), without its tests |
 | `README.md`, `NOTICE.md`, `assets/readme/*.svg`, `.gitattributes`, `.gitignore` | Crimson's README, this notice and its graphics |
 
 ## Earlier history

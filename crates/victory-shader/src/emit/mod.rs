@@ -241,6 +241,37 @@ pub use shader::{
     VIEW_STRIDES, VIEW_WRITE_BITS, VIEW_WRITES,
 };
 
+/// The clean-up passes that run over a translated program before it is
+/// written (`bitcode::opt`, from VIctory-7900XTX and fxceless/victory-fork):
+/// a set of that module's pass bits. Every pass is exact, so the switch is
+/// for telling a translator fault from a clean-up fault, and for measuring
+/// what the clean-up is worth. `VICTORY_SHADER_OPT`:
+/// - unset: every pass over the module (31).
+/// - `0`: none (the module as the lowering made it).
+/// - a number (decimal or `0x` hex): those passes; 1 dead code, 2 constants
+///   and identities, 4 one instruction for one value, 8 what a branch taken
+///   says about its condition, 16 one read for one place within a block.
+///
+/// Part of the translation: the shader cache keys on it (`victory-gpu`'s
+/// does).
+pub fn shader_opt() -> u32 {
+    static PASSES: std::sync::OnceLock<u32> = std::sync::OnceLock::new();
+    *PASSES.get_or_init(|| parse_shader_opt(std::env::var("VICTORY_SHADER_OPT").ok().as_deref()))
+}
+
+/// `VICTORY_SHADER_OPT`'s value; every pass over the module when it is
+/// unset or unreadable. Pure, for testing.
+fn parse_shader_opt(value: Option<&str>) -> u32 {
+    let parsed = value.and_then(|v| {
+        let v = v.trim();
+        match v.strip_prefix("0x").or_else(|| v.strip_prefix("0X")) {
+            Some(hex) => u32::from_str_radix(hex, 16).ok(),
+            None => v.parse().ok(),
+        }
+    });
+    parsed.map_or(bitcode::opt::MODULE, |n| n & bitcode::opt::MODULE)
+}
+
 /// The loop limit without an override: 2^20.
 pub const DEFAULT_LOOP_LIMIT: u32 = lower::LOOP_LIMIT;
 
