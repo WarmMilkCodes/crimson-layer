@@ -1702,13 +1702,59 @@ pub(crate) fn evict_unused() {
     if LAST.swap(frame, Relaxed) == frame {
         return;
     }
+    let (high, low) = budget_marks();
+    let mut seen = (0.0, 0.0);
     let over = crate::host::video_memory().map_or(0, |[(used, budget), _]| {
         // Free space in the heaps of textures takes the card's memory but
         // is not in use: new textures go there first.
         let used = used - crate::placement::free_bytes() as f64 / 1e6;
-        if used > BUDGET_HIGH * budget { ((used - BUDGET_LOW * budget) * 1e6) as u64 } else { 0 }
+        seen = (used, budget);
+        if used > high * budget { ((used - low * budget) * 1e6) as u64 } else { 0 }
     });
-    evict(frame, now_ms(), over);
+    let (gone, bytes) = evict(frame, now_ms(), over);
+    // What the card's budget asked for and what could be given up: on a
+    // card the world fills (8 GB), whether giving textures up holds it.
+    if over != 0 {
+        static PASSES: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+        static GONE: [std::sync::atomic::AtomicU64; 2] = [const { std::sync::atomic::AtomicU64::new(0) }; 2];
+        GONE[0].fetch_add(gone, Relaxed);
+        GONE[1].fetch_add(bytes, Relaxed);
+        let n = PASSES.fetch_add(1, Relaxed);
+        if n % 20 == 0 {
+            tracing::info!(
+                "the card past its mark: {:.0} of {:.0} MB in use (marks {:.0} and {:.0} %), {} MB to give up; given up in this pass {gone} textures {} MB, since the start {} textures {} MB over {} such passes",
+                seen.0,
+                seen.1,
+                high * 100.0,
+                low * 100.0,
+                over >> 20,
+                bytes >> 20,
+                GONE[0].load(Relaxed),
+                GONE[1].load(Relaxed) >> 20,
+                n + 1
+            );
+        }
+    }
+}
+
+/// The shares of the card's budget between which host textures are given
+/// up ([`BUDGET_HIGH`], [`BUDGET_LOW`]); `VICTORY_CARD_MARKS=high,low` in
+/// percent sets others (an 8 GB card at its budget lost the device within
+/// half a minute: `70,60` leaves it room).
+#[cfg(windows)]
+fn budget_marks() -> (f64, f64) {
+    static MARKS: std::sync::OnceLock<(f64, f64)> = std::sync::OnceLock::new();
+    *MARKS.get_or_init(|| {
+        let asked = std::env::var("VICTORY_CARD_MARKS").ok().and_then(|v| {
+            let (high, low) = v.split_once(',')?;
+            let (high, low) = (high.trim().parse::<f64>().ok()?, low.trim().parse::<f64>().ok()?);
+            (low > 0.0 && low < high && high <= 100.0).then_some((high / 100.0, low / 100.0))
+        });
+        if let Some((high, low)) = asked {
+            tracing::warn!("VICTORY_CARD_MARKS: host textures are given up past {:.0} % of the card's budget, down to {:.0} %", high * 100.0, low * 100.0);
+        }
+        asked.unwrap_or((BUDGET_HIGH, BUDGET_LOW))
+    })
 }
 
 /// A host texture and the title textures (resource objects) holding it.
