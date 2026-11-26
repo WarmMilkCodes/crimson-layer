@@ -46,6 +46,14 @@ pub(crate) struct Host {
     fence: ID3D12Fence,
     /// The last value signalled on `fence`, behind the submission lock.
     submitted: Mutex<u64>,
+    /// The lists that move textures to the states a submission's lists
+    /// start with (`HostList::prelude`), taken in order by each submission
+    /// and free again when it has run: as many as one submission needed.
+    /// One per list (never given back) was a megabyte of the host's command
+    /// memory each once used; with the title's lists' own that filled the
+    /// 2 GiB an AMD driver has for it, and the device was removed for a
+    /// resource that could not be paged in.
+    preludes: Mutex<Vec<(ID3D12CommandAllocator, ID3D12GraphicsCommandList)>>,
     event: HANDLE,
     rtvs: ID3D12DescriptorHeap,
     rtv_size: u32,
@@ -253,6 +261,7 @@ fn create() -> windows::core::Result<Host> {
             queue,
             fence,
             submitted: Mutex::new(0),
+            preludes: Mutex::default(),
             event,
             rtvs,
             rtv_size,
@@ -782,6 +791,9 @@ pub(crate) mod tests {
     }
 }
 
+/// State preludes made (`Host::preludes`), for the statistics.
+static PRELUDES: AtomicU32 = AtomicU32::new(0);
+
 /// A host command list and its allocator, always used together.
 pub(crate) struct HostList {
     allocator: ID3D12CommandAllocator,
@@ -812,8 +824,6 @@ pub(crate) struct HostList {
     /// The draw or dispatch being recorded runs a program using title
     /// memory ([`HostList::writer_uses_memory`]).
     memory_writer: std::sync::atomic::AtomicBool,
-    /// The list that runs those transitions just before this one.
-    prelude: (ID3D12CommandAllocator, ID3D12GraphicsCommandList),
     /// The pipelines the list binds, for reports of slow submissions.
     pipelines: Mutex<std::collections::BTreeSet<String>>,
     /// Which list this is, for the name that tells it apart in device-removed
@@ -1101,6 +1111,23 @@ impl Host {
         })
     }
 
+    /// A closed list and its allocator for a submission's state moves.
+    /// Counted in [`PRELUDES`].
+    fn new_prelude(&self) -> windows::core::Result<(ID3D12CommandAllocator, ID3D12GraphicsCommandList)> {
+        // SAFETY: plain object creation.
+        unsafe {
+            let allocator: ID3D12CommandAllocator = self
+                .device
+                .CreateCommandAllocator(D3D12_COMMAND_LIST_TYPE_DIRECT)?;
+            let list: ID3D12GraphicsCommandList =
+                self.device
+                    .CreateCommandList(0, D3D12_COMMAND_LIST_TYPE_DIRECT, &allocator, None)?;
+            list.Close()?;
+            PRELUDES.fetch_add(1, Ordering::Relaxed);
+            Ok((allocator, list))
+        }
+    }
+
     /// A new list, open for recording.
     pub(crate) fn new_list(&self) -> windows::core::Result<HostList> {
         // SAFETY: plain object creation.
@@ -1114,16 +1141,6 @@ impl Host {
                 &allocator,
                 None,
             )?;
-            let prelude_allocator: ID3D12CommandAllocator = self
-                .device
-                .CreateCommandAllocator(D3D12_COMMAND_LIST_TYPE_DIRECT)?;
-            let prelude: ID3D12GraphicsCommandList = self.device.CreateCommandList(
-                0,
-                D3D12_COMMAND_LIST_TYPE_DIRECT,
-                &prelude_allocator,
-                None,
-            )?;
-            prelude.Close()?;
             let id = NEXT_LIST.fetch_add(1, Ordering::Relaxed);
             name(&list, || list_name(id));
             Ok(HostList {
@@ -1137,7 +1154,6 @@ impl Host {
                 rebind: false.into(),
                 ours: false.into(),
                 memory_writer: false.into(),
-                prelude: (prelude_allocator, prelude),
                 pipelines: Mutex::default(),
                 id,
                 budget: OnceLock::new(),
@@ -1238,12 +1254,22 @@ impl Host {
         // Where each run's lists start in `lists`.
         let mut firsts = Vec::with_capacity(runs.len());
         let mut batch = Batch::default();
+        // Behind the submission lock, which is held until the lists have run.
+        let mut preludes = self.preludes.lock().unwrap_or_else(|e| e.into_inner());
+        let mut preludes_used = 0;
         for list in runs {
             list.run_deferred(&mut batch);
             firsts.push(lists.len());
             #[cfg(feature = "diagnostics")]
             let _timed = crate::watch::Timed(std::time::Instant::now(), crate::copystat::C::PreludeUs);
-            if let Some(prelude) = list.prelude() {
+            if preludes_used == preludes.len() {
+                match self.new_prelude() {
+                    Ok(pair) => preludes.push(pair),
+                    Err(e) => fail(format_args!("a host state prelude was not made ({e})")),
+                }
+            }
+            if let Some(prelude) = list.prelude(&preludes[preludes_used]) {
+                preludes_used += 1;
                 lists.push(Some(prelude));
             }
             lists.push(list.list.cast().ok());
@@ -1930,7 +1956,9 @@ impl HostList {
     /// At submission: the list that moves each texture this list uses from
     /// its real state to the one the list starts with; the textures' real
     /// states become those the list ends with.
-    fn prelude(&self) -> Option<ID3D12CommandList> {
+    /// Recorded into `pair`, one of the host's (`Host::preludes`), which is
+    /// not executing: the submission that used it last has run.
+    fn prelude(&self, pair: &(ID3D12CommandAllocator, ID3D12GraphicsCommandList)) -> Option<ID3D12CommandList> {
         // Depth textures and their twins first, from their real states and
         // back: the side each first use needs, made newer.
         let twins = self.twins.lock().unwrap_or_else(|e| e.into_inner());
@@ -1959,7 +1987,7 @@ impl HostList {
             left();
             return None;
         }
-        let (allocator, list) = &self.prelude;
+        let (allocator, list) = pair;
         // SAFETY: the prelude is not executing (every submission is waited
         // for); the textures are live.
         let recorded = unsafe {
@@ -3108,6 +3136,11 @@ impl Meter {
                  dropped {dropped:.0} without a host pipeline ({making} being made) and \
                  {indirect:.0} indirect; {root_views:.0} root-view slots/frame",
                 making = crate::pipeline::making()
+            );
+            tracing::info!(
+                "host lists made {}, state preludes {} (each list and prelude holds host command memory)",
+                NEXT_LIST.load(Ordering::Relaxed) - 1,
+                PRELUDES.load(Ordering::Relaxed)
             );
             let (textures, bytes, used, shared, saved, replaced) = crate::resource::texture_counts();
             let (heaps, heap_used, heap_free) = crate::placement::stats();
