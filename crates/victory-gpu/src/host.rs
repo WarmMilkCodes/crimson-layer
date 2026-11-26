@@ -3037,6 +3037,13 @@ struct Meter {
 /// the time from here.
 static CAPTION_SINCE: std::sync::OnceLock<std::time::Instant> = std::sync::OnceLock::new();
 
+/// When the title first drew a world's worth in a frame (menus and loading
+/// screens draw a handful): the caption's second time counts from here.
+static WORLD_SINCE: std::sync::OnceLock<std::time::Instant> = std::sync::OnceLock::new();
+
+/// Draws in a frame from which the title is taken to be in its world.
+const WORLD_DRAWS: f64 = 100.0;
+
 impl Meter {
     fn new() -> Self {
         let now = std::time::Instant::now();
@@ -3068,6 +3075,14 @@ impl Meter {
         let fps = frames / elapsed.as_secs_f64();
         let ms = elapsed.as_secs_f64() * 1000.0 / frames;
         let draws = (drawn - self.drawn) as f64 / frames;
+        if draws >= WORLD_DRAWS {
+            // From the start of the measured frames, which may be seconds long.
+            let since = self.since;
+            WORLD_SINCE.get_or_init(|| {
+                tracing::info!("the world: {draws:.0} draws/frame; the caption's world time starts");
+                since
+            });
+        }
         (self.since, self.frames, self.drawn) = (std::time::Instant::now(), 0, drawn);
         // Of a frame, ms preparing submissions and ms waiting for the GPU.
         let [cpu, gpu] = [0, 1].map(|i| {
@@ -3153,7 +3168,7 @@ impl Meter {
                 }
             }
         }
-        // Crimson: "Crimson | 00:12:34 | 2 fps 452.1 ms/frame 1188 draws/frame",
+        // Crimson: "Crimson | 00:12:34 | world 00:04:10 | 2 fps 452.1 ms/frame 1188 draws/frame",
         // the time counted from when presenting to the window started (the
         // window's own text, the title's, is not shown).
         let stats = format!("{fps:.0} fps {ms:.1} ms/frame {draws:.0} draws/frame");
@@ -3177,7 +3192,19 @@ impl Meter {
                         }
                         if let Some((hwnd, stats)) = &current {
                             let up = opened.elapsed().as_secs();
-                            let text = format!("Crimson | {:02}:{:02}:{:02} | {stats}", up / 3600, up / 60 % 60, up % 60);
+                            let world = match WORLD_SINCE.get() {
+                                Some(since) => {
+                                    let s = since.elapsed().as_secs();
+                                    format!("{:02}:{:02}:{:02}", s / 3600, s / 60 % 60, s % 60)
+                                }
+                                None => "--:--:--".into(),
+                            };
+                            let text = format!(
+                                "Crimson | {:02}:{:02}:{:02} | world {world} | {stats}",
+                                up / 3600,
+                                up / 60 % 60,
+                                up % 60
+                            );
                             if text != shown {
                                 let wide: Vec<u16> = text.encode_utf16().chain(std::iter::once(0)).collect();
                                 // SAFETY: a window handle and a NUL-terminated text.
