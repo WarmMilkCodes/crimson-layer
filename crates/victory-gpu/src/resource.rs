@@ -1131,8 +1131,26 @@ fn host_desc(desc: &ResourceDesc) -> Option<ResourceDesc> {
     if d.flags & UNORDERED != 0 && SRGB.iter().any(|&(srgb, _)| srgb == d.format) {
         d.format = family(d.format);
     }
+    // The host neither renders to R9G9B9E5 nor stores to it from shaders;
+    // the console does both (the title's 1920x1080 picture in Series S
+    // mode, which the upscaler writes): the host refused the texture, and
+    // nothing drawn or upscaled into it was seen. Such a texture is
+    // R11G11B10_FLOAT on the host: the same four bytes a texel and three
+    // floats to shaders; its views take that format (`descriptor::host::
+    // fits`, `Host::rtv`).
+    // shortcut: its bytes are not the console's, so a copy between it and
+    // title memory or a true R9G9B9E5 texture is wrong or refused.
+    const RENDER_TARGET: u32 = 1;
+    if d.format == R9G9B9E5 && d.flags & (RENDER_TARGET | UNORDERED) != 0 {
+        static ONCE: std::sync::Once = std::sync::Once::new();
+        ONCE.call_once(|| tracing::warn!(width = d.width, height = d.height, flags = d.flags, "an R9G9B9E5 texture the title writes: R11G11B10_FLOAT on the host"));
+        d.format = R11G11B10_FLOAT;
+    }
     Some(d)
 }
+
+/// DXGI_FORMAT_R11G11B10_FLOAT.
+pub(crate) const R11G11B10_FLOAT: u32 = 26;
 
 const DEPTH: u32 = 2;
 #[cfg(windows)]
@@ -1291,6 +1309,93 @@ fn current(this: This) -> bool {
         .is_none_or(|live| std::sync::Arc::ptr_eq(&live, &h))
 }
 
+/// DXGI_FORMAT_R9G9B9E5_SHAREDEXP.
+pub(crate) const R9G9B9E5: u32 = 67;
+
+/// Whether the host casts a texture to the formats of a list given when it
+/// is made (`RelaxedFormatCastingSupported`). The calls that take the list
+/// exist without it: on an RX 6600 XT under Windows 10.0.22631 a texture
+/// was made with its list, and a view in a listed format of another family
+/// (R9G9B9E5 of R32_UINT, the sky's tables) then removed the device.
+/// Without it no texture gets a list, and title textures of one memory in
+/// formats of different families get a host texture each, as where the
+/// host refuses the list.
+#[cfg(windows)]
+fn format_lists() -> bool {
+    use windows::Win32::Graphics::Direct3D12::*;
+    static KNOWN: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *KNOWN.get_or_init(|| {
+        let Some(host) = crate::host::host() else {
+            return false;
+        };
+        let mut options = D3D12_FEATURE_DATA_D3D12_OPTIONS12::default();
+        // SAFETY: a plain query into a struct of its size.
+        let asked = unsafe {
+            host.device.CheckFeatureSupport(
+                D3D12_FEATURE_D3D12_OPTIONS12,
+                (&raw mut options).cast(),
+                std::mem::size_of_val(&options) as u32,
+            )
+        };
+        let supported = asked.is_ok() && options.RelaxedFormatCastingSupported.as_bool();
+        // The answer is not enough: Windows 10.0.22631 with an RX 6600 XT
+        // says yes, takes the lists, and then removes the device at a view
+        // in a listed format of another family (R9G9B9E5 of R32_UINT,
+        // BC7_UNORM of BC5_UNORM). Lists are used from Windows 11 24H2
+        // (build 26100) on; `VICTORY_FORMAT_LISTS=1` or `=0` decides
+        // instead.
+        let build = windows_build();
+        let wanted = match std::env::var("VICTORY_FORMAT_LISTS").ok().as_deref().map(str::trim) {
+            Some("0") => false,
+            Some("1") => true,
+            _ => build >= 26100,
+        };
+        let used = supported && wanted;
+        if used {
+            tracing::info!(build, "the host casts textures by format lists");
+        } else {
+            tracing::warn!(
+                asked = asked.is_ok(),
+                supported,
+                build,
+                "no texture is made with a format list: title textures of one memory in formats of different families get a host texture each (VICTORY_FORMAT_LISTS=1 uses lists)"
+            );
+        }
+        used
+    })
+}
+
+/// The running Windows' build number (0 if it cannot be asked).
+#[cfg(windows)]
+fn windows_build() -> u32 {
+    #[repr(C)]
+    struct VersionInfo {
+        size: u32,
+        major: u32,
+        minor: u32,
+        build: u32,
+        platform: u32,
+        service_pack: [u16; 128],
+    }
+    #[link(name = "ntdll")]
+    unsafe extern "system" {
+        fn RtlGetVersion(info: *mut VersionInfo) -> i32;
+    }
+    let mut info = VersionInfo {
+        size: std::mem::size_of::<VersionInfo>() as u32,
+        major: 0,
+        minor: 0,
+        build: 0,
+        platform: 0,
+        service_pack: [0; 128],
+    };
+    // SAFETY: the structure RtlGetVersion fills (RTL_OSVERSIONINFOW), its size set.
+    if unsafe { RtlGetVersion(&mut info) } != 0 {
+        return 0;
+    }
+    info.build
+}
+
 /// A host texture of host description `d` in GPU memory, castable to
 /// [`castable`]'s formats (colour textures, through the enhanced-barrier
 /// creation; it starts in the common state) where the host takes that.
@@ -1306,6 +1411,10 @@ fn make_texture(d: &ResourceDesc, state: u32, clear: *const c_void) -> Option<Ho
         // SAFETY: the title passes a whole clear value.
         let mut value = unsafe { clear.cast::<[u32; 5]>().read_unaligned() };
         value[0] = pc_format(value[0]);
+        // (the texture's own format where `host_desc` gave it another)
+        if value[0] == R9G9B9E5 && d.format == R11G11B10_FLOAT {
+            value[0] = d.format;
+        }
         value
     });
     let clear_value = clear_value.as_ref().map(|v| std::ptr::from_ref(v).cast::<D3D12_CLEAR_VALUE>());
@@ -1314,7 +1423,7 @@ fn make_texture(d: &ResourceDesc, state: u32, clear: *const c_void) -> Option<Ho
         ..Default::default()
     };
     let mut texture: Option<ID3D12Resource> = None;
-    let mut castable_formats = if d.flags & DEPTH == 0 { castable(d.format) } else { Vec::new() };
+    let mut castable_formats = if d.flags & DEPTH == 0 && format_lists() { castable(d.format) } else { Vec::new() };
     let mut initial = crate::host::legal_for(d.flags, crate::host::texture_state(state));
     // In a heap of textures if it fits there (`crate::placement`).
     // SAFETY: the description has the host layout (checked size).

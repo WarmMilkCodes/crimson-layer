@@ -1624,12 +1624,23 @@ impl Host {
         desc: Option<&D3D12_RENDER_TARGET_VIEW_DESC>,
     ) -> D3D12_CPU_DESCRIPTOR_HANDLE {
         let slot = self.next_rtv.fetch_add(1, Ordering::Relaxed) % RTV_RING;
+        // An R9G9B9E5 view of a texture the host made R11G11B10_FLOAT
+        // (`resource::host_desc`): in the texture's format.
+        // SAFETY: a plain query on a live resource.
+        let own = unsafe { resource.GetDesc() }.Format;
+        let desc = desc.map(|d| {
+            let mut d = *d;
+            if d.Format.0 as u32 == crate::resource::R9G9B9E5 && own.0 as u32 == crate::resource::R11G11B10_FLOAT {
+                d.Format = own;
+            }
+            d
+        });
         // SAFETY: a slot of our heap and a live resource.
         unsafe {
             let mut handle = self.rtvs.GetCPUDescriptorHandleForHeapStart();
             handle.ptr += (slot * self.rtv_size) as usize;
             self.device
-                .CreateRenderTargetView(resource, desc.map(|d| d as *const _), handle);
+                .CreateRenderTargetView(resource, desc.as_ref().map(std::ptr::from_ref), handle);
             handle
         }
     }

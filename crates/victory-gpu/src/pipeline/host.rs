@@ -220,6 +220,11 @@ impl GraphicsState {
                     self.targets = data.cast::<D3D12_RT_FORMAT_ARRAY>().read_unaligned();
                     for f in &mut self.targets.RTFormats {
                         f.0 = crate::resource::pc_format(f.0 as u32) as i32;
+                        // (the format the host gives a render target the
+                        // title has in R9G9B9E5: `resource::host_desc`)
+                        if f.0 as u32 == crate::resource::R9G9B9E5 {
+                            f.0 = crate::resource::R11G11B10_FLOAT as i32;
+                        }
                     }
                 }
                 16 => {

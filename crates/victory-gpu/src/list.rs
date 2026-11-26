@@ -652,6 +652,16 @@ extern "system" fn copy_resource(this: This, dst: This, src: This) {
             crate::resource::host_resource(dst),
             crate::resource::host_resource(src),
         ) {
+            // A texture the host made in another format than the title's
+            // (R9G9B9E5 as R11G11B10_FLOAT, `resource::host_desc`) and one
+            // in the title's: the host refuses the copy, so it is dropped.
+            // SAFETY: plain queries on live resources.
+            let (tf, ff) = unsafe { (to.GetDesc().Format.0 as u32, from.GetDesc().Format.0 as u32) };
+            if tf != ff && (tf == crate::resource::R11G11B10_FLOAT || ff == crate::resource::R11G11B10_FLOAT) && (tf == crate::resource::R9G9B9E5 || ff == crate::resource::R9G9B9E5) {
+                static ONCE: std::sync::Once = std::sync::Once::new();
+                ONCE.call_once(|| tracing::warn!(to = tf, from = ff, "a copy between an R9G9B9E5 texture and one made R11G11B10_FLOAT: dropped"));
+                return;
+            }
             if crate::texture::title_written(&from) {
                 crate::texture::upload(list, src, &from);
             }

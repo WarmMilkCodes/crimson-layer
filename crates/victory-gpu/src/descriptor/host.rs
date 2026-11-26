@@ -1363,6 +1363,14 @@ fn fits(texture: &ID3D12Resource, castable: &[u32], mut format: Option<&mut DXGI
         );
         return false;
     }
+    // An R9G9B9E5 view of a texture the host made R11G11B10_FLOAT
+    // (`resource::host_desc`): in the texture's format.
+    if own == crate::resource::R11G11B10_FLOAT
+        && let Some(format) = format.as_deref_mut()
+        && format.0 as u32 == crate::resource::R9G9B9E5
+    {
+        format.0 = own as i32;
+    }
     // Every family has more than one format, its typeless one first.
     let is_typeless = |f: u32| family(f) == f && family(f + 1) == f;
     let typeless = is_typeless(own);
@@ -1393,6 +1401,15 @@ fn fits(texture: &ID3D12Resource, castable: &[u32], mut format: Option<&mut DXGI
         return false;
     }
     let cast = castable.contains(&view);
+    // An R9G9B9E5 view of a texture in another format removed the device
+    // when made on a host that had taken the texture's format list (an
+    // RX 6600 XT, see `resource::format_lists`): whatever the list says,
+    // the slot stays null and reads zero.
+    // shortcut: what the view would read is lost.
+    if view == crate::resource::R9G9B9E5 && own != view {
+        once!(view, own, "an R9G9B9E5 view of a texture in another format: left null");
+        return false;
+    }
     if family(view) != family(own) && !cast {
         once!(view, own, "view format of another family");
         return false;
