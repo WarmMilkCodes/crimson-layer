@@ -218,6 +218,8 @@ struct Pipeline {
     /// (by a worker: the title may release the pipeline meanwhile).
     #[cfg(windows)]
     host: Arc<make::Pending>,
+    /// One of the console's ray-tracing structure builder's ([`of_builder`]).
+    builder: bool,
 }
 const _: () = assert!(offset_of!(Pipeline, packet) == 0x10);
 
@@ -359,6 +361,78 @@ pub(crate) fn take_drops() -> Vec<(String, u64)> {
     drops
 }
 
+/// Whether `shaders` are a compute pipeline of the console's ray-tracing
+/// structure builder (`XboxBvhBuilder.dll`): in this title exactly its
+/// programs keep their root parameters in a spilled user-data table (more
+/// parameters than the program's user SGPRs; dwords 0 and 1 hold the
+/// table's address and the first spilled parameter is at user-data index
+/// 16). After the test of VIctory-7900XTX's `victory_shader::spill`.
+fn of_builder(shaders: &[Arc<Shader>]) -> bool {
+    use victory_shader::native::StageIo;
+    use victory_shader::{Container, FourCC, HwStage};
+    let [shader] = shaders else { return false };
+    if shader.stage != "compute" {
+        return false;
+    }
+    let Ok(c) = Container::parse(&shader.container) else {
+        return false;
+    };
+    let Some(programs) = c.part(FourCC::DXIL).and_then(|part| victory_shader::native_programs(part.data).ok()) else {
+        return false;
+    };
+    programs.iter().any(|native| {
+        let StageIo::Cs(cs) = &native.io else { return false };
+        if native.stage != HwStage::Cs {
+            return false;
+        }
+        let registers = u32::from(cs.user_sgprs());
+        let first = native
+            .layout
+            .iter()
+            .filter(|e| e.sgprs > 0 && u32::from(e.user_data) >= registers)
+            .map(|e| u32::from(e.user_data))
+            .min();
+        first == Some(16) && registers >= 2
+    })
+}
+
+/// Builder pipelines the title made, for the log.
+static BUILDER_PIPELINES: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
+
+fn note_builder() {
+    let n = BUILDER_PIPELINES.fetch_add(1, std::sync::atomic::Ordering::Relaxed) + 1;
+    if n == 1 || n.is_power_of_two() {
+        tracing::info!(
+            pipelines = n,
+            runs = builder_on(),
+            "ray-tracing structure builder pipelines (VICTORY_BVH_BUILDER=1 runs them)"
+        );
+    }
+}
+
+/// Whether the title's pipeline `this` is one of the ray-tracing structure
+/// builder's ([`of_builder`]).
+pub(crate) fn is_builder(this: This) -> bool {
+    !this.is_null() && pipeline(this).builder
+}
+
+/// Whether the ray-tracing structure builder's dispatches run (off by
+/// default; `VICTORY_BVH_BUILDER=1`: they run, as before).
+///
+/// Off, the title's ray-traced light has no structures to walk: what costs
+/// the frames of a console's hardware ray tracing is not paid for on a card
+/// without the console's instructions. And its stages feed each other
+/// through memory: a stage that runs on what a stage with no host pipeline
+/// never wrote computes its store offsets from garbage, and its stores
+/// land in plain title memory beside the structures. VIctory-7900XTX saw
+/// the title die on pointers that had become bounding-box bit patterns
+/// (its run 98, 14 of 35 stages translated); here a crash read a pointer of
+/// half-float infinities (0xfc007c00...), the bounds of an empty box.
+pub(crate) fn builder_on() -> bool {
+    static ON: OnceLock<bool> = OnceLock::new();
+    *ON.get_or_init(|| std::env::var_os("VICTORY_BVH_BUILDER").is_some_and(|v| v == "1"))
+}
+
 /// The stage's container, if it has one.
 fn copy(stage: &'static str, code: &Bytecode) -> Option<Arc<Shader>> {
     // SAFETY: the title passes `size` bytes of shader code.
@@ -387,11 +461,16 @@ fn hand_out(
     ));
     #[cfg(windows)]
     make::early(&host);
+    let builder = of_builder(&shaders);
+    if builder {
+        note_builder();
+    }
     let pipeline = Box::new(Pipeline {
         object: Object::new(&FUNCTIONS),
         packet: [0; 8],
         #[cfg(windows)]
         host,
+        builder,
         shaders,
         bound: std::sync::atomic::AtomicBool::new(false),
     });

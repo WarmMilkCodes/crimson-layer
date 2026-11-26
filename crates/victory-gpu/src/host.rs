@@ -3204,9 +3204,10 @@ impl Meter {
                 making = crate::pipeline::making()
             );
             tracing::info!(
-                "host lists made {}, state preludes {} (each list and prelude holds host command memory)",
+                "host lists made {}, state preludes {} (each list and prelude holds host command memory); ray-tracing structure builder dispatches left out {}",
                 NEXT_LIST.load(Ordering::Relaxed) - 1,
-                PRELUDES.load(Ordering::Relaxed)
+                PRELUDES.load(Ordering::Relaxed),
+                crate::draw::builder_dropped()
             );
             let (textures, bytes, used, shared, saved, replaced) = crate::resource::texture_counts();
             let (heaps, heap_used, heap_free) = crate::placement::stats();

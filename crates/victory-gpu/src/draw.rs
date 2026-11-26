@@ -152,6 +152,15 @@ fn unbounded() -> bool {
     })
 }
 
+/// Dispatches of the ray-tracing structure builder left out
+/// (`crate::pipeline::builder_on`), since the start.
+static BUILDER_DROPPED: AtomicU64 = AtomicU64::new(0);
+
+/// [`BUILDER_DROPPED`].
+pub(crate) fn builder_dropped() -> u64 {
+    BUILDER_DROPPED.load(Ordering::Relaxed)
+}
+
 /// Draws recorded on the host GPU since the last frame line.
 static DRAWN: AtomicU64 = AtomicU64::new(0);
 
@@ -1116,6 +1125,10 @@ impl State {
             dropped(list, self.pipeline, "dispatch");
             return;
         }
+        if crate::pipeline::is_builder(self.pipeline as This) && !crate::pipeline::builder_on() {
+            BUILDER_DROPPED.fetch_add(1, Ordering::Relaxed);
+            return;
+        }
         let Some(p) = crate::pipeline::host_pipeline(self.pipeline as This) else {
             once!(
                 pipeline = format_args!("{:#x}", self.pipeline),
@@ -1747,6 +1760,10 @@ impl State {
         // the arguments and dispatch a compute shader for records nothing
         // reads. Same order as the `is_skipped` check above, for the same
         // reason.
+        if crate::pipeline::is_builder(self.pipeline as This) && !crate::pipeline::builder_on() {
+            BUILDER_DROPPED.fetch_add(1, Ordering::Relaxed);
+            return false;
+        }
         if crate::pipeline::host_pipeline(self.pipeline as This).is_none() {
             #[cfg(feature = "diagnostics")]
             crate::pipeline::note_drop(self.pipeline as This);
