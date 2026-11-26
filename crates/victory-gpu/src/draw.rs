@@ -136,6 +136,22 @@ pub(crate) fn take_root_view_slots() -> u64 {
 }
 static ROOT_VIEW_SLOTS: AtomicU64 = AtomicU64::new(0);
 
+/// A measurement, `VICTORY_INDIRECT_UNBOUNDED=1`: indirect executions read
+/// the title's own records, with no clamp pass before each (`crate::indirect`):
+/// what the passes cost, each a compute dispatch between two waits that also
+/// has the draw's pipeline and state bound again. Nothing bounds a garbage
+/// record then, so a run with it may hang the card: for timing only.
+fn unbounded() -> bool {
+    static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *ON.get_or_init(|| {
+        let on = crate::switch::on("VICTORY_INDIRECT_UNBOUNDED");
+        if on {
+            tracing::warn!("VICTORY_INDIRECT_UNBOUNDED: indirect arguments are not clamped (a measurement; a garbage record can hang the card)");
+        }
+        on
+    })
+}
+
 /// Draws recorded on the host GPU since the last frame line.
 static DRAWN: AtomicU64 = AtomicU64::new(0);
 
@@ -1764,12 +1780,19 @@ impl State {
             s.refresh(list, *at, 4);
         }
         // Bounded first: the clamp binds a compute pipeline of its own.
-        let Some(clamped) = crate::indirect::bound(list, args.gpu(arguments), (kind, stride, max)) else {
-            why("not bounded (no clamp, or arguments not 4-byte aligned)");
-            return false;
+        // A measurement (`VICTORY_INDIRECT_UNBOUNDED`): no clamp, the host
+        // reads the title's records as they are.
+        let clamped = if unbounded() {
+            None
+        } else {
+            let Some(clamped) = crate::indirect::bound(list, args.gpu(arguments), (kind, stride, max)) else {
+                why("not bounded (no clamp, or arguments not 4-byte aligned)");
+                return false;
+            };
+            self.host_pipeline = 0;
+            self.host_roots[1] = 0;
+            Some(clamped)
         };
-        self.host_pipeline = 0;
-        self.host_roots[1] = 0;
         let ran = match kind {
             DRAW | INDEXED => {
                 (self.topology != RECTANGLES || self.completes_rectangles() || {
@@ -1785,7 +1808,9 @@ impl State {
             _ => false,
         };
         if !ran {
-            crate::indirect::done(list, &clamped);
+            if let Some(clamped) = &clamped {
+                crate::indirect::done(list, clamped);
+            }
             #[cfg(feature = "diagnostics")]
             match crate::pipeline::host_pipeline(self.pipeline as This) {
                 None => {
@@ -1811,8 +1836,8 @@ impl State {
             list.list.ExecuteIndirect(
                 &signature,
                 max,
-                &clamped,
-                0,
+                clamped.as_ref().unwrap_or(&args.buffer),
+                if clamped.is_some() { 0 } else { args.offset(arguments) },
                 counter.as_ref().map(|(s, _)| &s.buffer),
                 counter.as_ref().map_or(0, |(s, at)| s.offset(*at)),
             )
@@ -1823,13 +1848,17 @@ impl State {
         {
             let always = !crate::host::traced_shaders().is_empty()
                 && crate::host::is_traced(&crate::pipeline::shaders_of(pipeline));
-            if always || crate::capture::dump_on() {
+            if let Some(clamped) = &clamped
+                && (always || crate::capture::dump_on())
+            {
                 let count = counter.as_ref().map(|(s, at)| (&s.buffer, s.offset(*at)));
                 let name = crate::pipeline::shaders_of(pipeline);
-                crate::capture::read_indirect(list, (&clamped, 0), count, (kind, stride, max), name, always);
+                crate::capture::read_indirect(list, (clamped, 0), count, (kind, stride, max), name, always);
             }
         }
-        crate::indirect::done(list, &clamped);
+        if let Some(clamped) = &clamped {
+            crate::indirect::done(list, clamped);
+        }
         if kind == DISPATCH {
             DISPATCHED.fetch_add(1, Ordering::Relaxed);
         } else {
