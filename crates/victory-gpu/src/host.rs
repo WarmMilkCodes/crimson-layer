@@ -105,6 +105,71 @@ pub(crate) static PREPARING: [std::sync::atomic::AtomicU64; 4] = [
 /// draws nothing at seconds per frame.
 static ON_FAILURE: OnceLock<fn(&str) -> !> = OnceLock::new();
 
+/// The last writes of ours into title memory (address, bytes, when),
+/// oldest first: copy-backs of what the host GPU wrote. A crash report
+/// names those its registers point into ([`title_writes_near`]): the title
+/// has crashed on pointers that were pixel and half-float data.
+static TITLE_WRITES: Mutex<std::collections::VecDeque<(usize, usize, std::time::Instant)>> =
+    Mutex::new(std::collections::VecDeque::new());
+
+/// Writes kept in [`TITLE_WRITES`].
+const TITLE_WRITES_KEPT: usize = 1 << 17;
+
+fn note_title_write(at: usize, len: usize) {
+    if len == 0 {
+        return;
+    }
+    let mut writes = TITLE_WRITES.lock().unwrap_or_else(|e| e.into_inner());
+    if writes.len() == TITLE_WRITES_KEPT {
+        writes.pop_front();
+    }
+    writes.push_back((at, len, std::time::Instant::now()));
+}
+
+/// For a crash report: which of `values` (the faulting address and the
+/// registers) lie in memory we wrote lately, or on a page of it, and how
+/// long before; one line each, and one for what was looked through.
+pub fn title_writes_near(values: &[u64]) -> String {
+    const PAGE: usize = 4096;
+    // Not waited for: the crashed thread may hold it.
+    let Ok(writes) = TITLE_WRITES.try_lock() else {
+        return "  writes into title memory: being noted, not looked through\n".into();
+    };
+    let mut text = String::new();
+    let mut seen: Vec<u64> = Vec::new();
+    for &v in values {
+        if v < 0x1_0000 || seen.contains(&v) {
+            continue;
+        }
+        seen.push(v);
+        let at = v as usize;
+        let page = at & !(PAGE - 1);
+        let inside = writes.iter().rev().find(|&&(a, n, _)| a <= at && at < a + n);
+        let near = writes
+            .iter()
+            .rev()
+            .find(|&&(a, n, _)| a < page + PAGE && page < a + n);
+        if let Some(&(a, n, when)) = inside {
+            text.push_str(&format!(
+                "  {v:#x}: in a write of ours into title memory {:.0} ms before ({a:#x}+{n:#x})\n",
+                when.elapsed().as_secs_f64() * 1e3
+            ));
+        } else if let Some(&(a, n, when)) = near {
+            text.push_str(&format!(
+                "  {v:#x}: on a page we wrote into {:.0} ms before ({a:#x}+{n:#x})\n",
+                when.elapsed().as_secs_f64() * 1e3
+            ));
+        }
+    }
+    let oldest = writes.front().map_or(0.0, |w| w.2.elapsed().as_secs_f64());
+    let newest = writes.back().map_or(0.0, |w| w.2.elapsed().as_secs_f64() * 1e3);
+    text.push_str(&format!(
+        "  writes of ours into title memory looked through: {} (the oldest {oldest:.1} s before, the newest {newest:.0} ms)\n",
+        writes.len()
+    ));
+    text
+}
+
 /// Sets what a host GPU failure does (the runtime's crash report).
 pub fn on_failure(report: fn(&str) -> !) {
     let _ = ON_FAILURE.set(report);
@@ -2597,6 +2662,7 @@ fn read(src: *const u8, dst: *mut u8, len: usize) -> bool {
 /// [`copy_mapped`]): 0.35 ms for each piece of the world's copy-back, 39 ms
 /// per frame.
 pub(crate) fn write_mapped(dst: *mut u8, src: *const u8, len: usize) {
+    note_title_write(dst as usize, len);
     let write = |at: usize, n: usize| read(src.wrapping_add(at - dst as usize), at as *mut u8, n);
     if len == 0 || write(dst as usize, len) {
         return;

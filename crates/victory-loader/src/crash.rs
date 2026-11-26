@@ -46,6 +46,16 @@ pub fn save_on_crash(ranges: Vec<(usize, usize, std::path::PathBuf)>) {
 }
 
 /// The file crash reports are appended to, besides being printed.
+/// Lines a crash report adds, from the faulting address and the registers
+/// ([`note_crashes_with`]).
+static NOTES: std::sync::OnceLock<fn(&[u64]) -> String> = std::sync::OnceLock::new();
+
+/// Sets what adds lines to crash reports: called with the faulting address
+/// (of an access violation) and the general registers.
+pub fn note_crashes_with(notes: fn(&[u64]) -> String) {
+    let _ = NOTES.set(notes);
+}
+
 static LOG: std::sync::OnceLock<std::path::PathBuf> = std::sync::OnceLock::new();
 
 /// Read before installing the exception handler.
@@ -686,6 +696,30 @@ unsafe fn report(what: &str, info: *const EXCEPTION_POINTERS, to_file: bool) {
     ));
     for (i, pc) in unwind(*context).into_iter().enumerate() {
         line(format!("  #{i:<2} {}", locate(pc as usize)));
+    }
+    if let Some(notes) = NOTES.get() {
+        let faulting = if code == EXCEPTION_ACCESS_VIOLATION { p[1] as u64 } else { 0 };
+        let values = [
+            faulting,
+            context.Rax,
+            context.Rbx,
+            context.Rcx,
+            context.Rdx,
+            context.Rsi,
+            context.Rdi,
+            context.Rbp,
+            context.R8,
+            context.R9,
+            context.R10,
+            context.R11,
+            context.R12,
+            context.R13,
+            context.R14,
+            context.R15,
+        ];
+        for l in notes(&values).lines() {
+            line(l.to_string());
+        }
     }
     if to_file {
         let end = report_end();
