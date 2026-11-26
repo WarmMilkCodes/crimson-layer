@@ -76,3 +76,10 @@
 *.swp
 Thumbs.db
 .DS_Store
+
+# Crimson: the README's hand-written graphics (text, checked by `cargo xtask policy`)
+!/assets/
+/assets/*
+!/assets/readme/
+/assets/readme/*
+!/assets/readme/*.svg

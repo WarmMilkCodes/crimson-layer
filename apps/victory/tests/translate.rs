@@ -5,7 +5,7 @@ use std::process::Command;
 fn translate_rejects_zero_workers() {
     let input = Path::new(env!("CARGO_MANIFEST_DIR")).join("Cargo.toml");
     for extra_args in [&[][..], &["--cache"][..]] {
-        let output = Command::new(env!("CARGO_BIN_EXE_victory"))
+        let output = Command::new(env!("CARGO_BIN_EXE_crimson"))
             .arg("translate")
             .arg(&input)
             .args(["--jobs", "0"])

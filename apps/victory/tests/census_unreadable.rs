@@ -47,7 +47,7 @@ fn census_reports_unreadable_files_and_continues_scanning() {
         Some(32), // ERROR_SHARING_VIOLATION
     );
 
-    let output = Command::new(env!("CARGO_BIN_EXE_victory"))
+    let output = Command::new(env!("CARGO_BIN_EXE_crimson"))
         .args(["census", "--strict"])
         .args([&locked, &empty, &short, &text, &readable])
         .output()

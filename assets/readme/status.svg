@@ -1,0 +1,43 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1280 300" role="img" aria-labelledby="t d">
+  <title id="t">Crimson progress</title>
+  <desc id="d">A newer retail game on an RX 6600 XT in Series S mode: boots, plays its menus at 30 fps, loads the story and renders the world with picture and sound at about 2 fps; the GPU is lost after about five minutes in the world.</desc>
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#140608"/><stop offset="1" stop-color="#22070e"/></linearGradient>
+    <linearGradient id="bar" x1="0" y1="0" x2="1" y2="0"><stop offset="0" stop-color="#e0183a"/><stop offset="1" stop-color="#ff9a4a"/></linearGradient>
+  </defs>
+  <style>
+    text { font-family: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif }
+    .lbl { font-size: 17px; fill: #ffd9de }
+    .dim { font-size: 15px; fill: #ffd9de; fill-opacity: .55 }
+    .num { font-size: 34px; font-weight: 800; fill: #fff }
+  </style>
+  <rect width="1280" height="300" rx="24" fill="url(#bg)" stroke="#ff5468" stroke-opacity=".25" stroke-width="2"/>
+  <text x="48" y="56" font-size="24" font-weight="700" fill="#fff">A newer retail game · RX 6600 XT 8 GB · Ryzen 5 5500 · 32 GB</text>
+  <text x="48" y="84" class="dim">Where it gets to today, in Series S mode (not playable yet)</text>
+
+  <!-- stages -->
+  <g transform="translate(48 120)">
+    <rect x="0" y="18" width="1184" height="6" rx="3" fill="#fff" fill-opacity=".08"/>
+    <rect x="0" y="18" width="1036" height="6" rx="3" fill="url(#bar)"/>
+    <g>
+      <circle cx="0" cy="21" r="13" fill="#e0183a"/><path d="M-6 21l4 4 8-8" stroke="#fff" stroke-width="3" fill="none" stroke-linecap="round"/>
+      <text x="0" y="62" class="lbl" text-anchor="start">Boots</text>
+      <circle cx="296" cy="21" r="13" fill="#e8303c"/><path d="M290 21l4 4 8-8" stroke="#fff" stroke-width="3" fill="none" stroke-linecap="round"/>
+      <text x="296" y="62" class="lbl" text-anchor="middle">Menus</text>
+      <circle cx="592" cy="21" r="13" fill="#f2553f"/><path d="M586 21l4 4 8-8" stroke="#fff" stroke-width="3" fill="none" stroke-linecap="round"/>
+      <text x="592" y="62" class="lbl" text-anchor="middle">Loads the story</text>
+      <circle cx="888" cy="21" r="13" fill="#fa7a44"/><path d="M882 21l4 4 8-8" stroke="#fff" stroke-width="3" fill="none" stroke-linecap="round"/>
+      <text x="888" y="62" class="lbl" text-anchor="middle">Renders the world</text>
+      <circle cx="1184" cy="21" r="13" fill="none" stroke="#fff" stroke-opacity=".3" stroke-width="3"/>
+      <text x="1184" y="62" class="lbl" text-anchor="end">Playable</text>
+    </g>
+  </g>
+
+  <!-- numbers: each centred on its column, so they line up in any font -->
+  <g transform="translate(48 238)" text-anchor="middle">
+    <text x="148" y="0" class="num">30 fps</text><text x="148" y="26" class="dim">menus, steady</text>
+    <text x="444" y="0" class="num">~2 fps</text><text x="444" y="26" class="dim">in the world, picture and sound</text>
+    <text x="740" y="0" class="num">~5 min</text><text x="740" y="26" class="dim">in the world before the GPU is lost</text>
+    <text x="1036" y="0" class="num">12 min</text><text x="1036" y="26" class="dim">to translate every shader, once</text>
+  </g>
+</svg>

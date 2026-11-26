@@ -18,9 +18,9 @@ use clap::{Parser, Subcommand, ValueEnum};
 
 #[derive(Parser)]
 #[command(
-    name = "victory",
+    name = "crimson",
     version,
-    about = "Run an Xbox Series title natively on Windows"
+    about = "Crimson (built on VIctory): run an Xbox Series title natively on Windows"
 )]
 struct Cli {
     #[command(subcommand)]

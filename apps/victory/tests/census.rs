@@ -7,7 +7,7 @@ fn census_fails_when_a_requested_path_is_missing() {
     let missing = valid.with_extension("missing-census-input");
     assert!(!missing.exists());
 
-    let output = Command::new(env!("CARGO_BIN_EXE_victory"))
+    let output = Command::new(env!("CARGO_BIN_EXE_crimson"))
         .arg("census")
         .args([&valid, &missing])
         .output()
@@ -24,7 +24,7 @@ fn census_fails_when_a_requested_path_is_missing() {
 #[test]
 fn census_accepts_a_valid_path_with_no_pe_images() {
     let valid = Path::new(env!("CARGO_MANIFEST_DIR")).join("Cargo.toml");
-    let output = Command::new(env!("CARGO_BIN_EXE_victory"))
+    let output = Command::new(env!("CARGO_BIN_EXE_crimson"))
         .arg("census")
         .arg(valid)
         .output()

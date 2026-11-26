@@ -3031,20 +3031,22 @@ struct Meter {
     report_frames: u64,
     drawn: u64,
     logged: std::time::Instant,
-    /// The caption the window had, once read.
-    caption: Option<Vec<u16>>,
 }
+
+/// When the first presenter's meter was made: the window's caption counts
+/// the time from here.
+static CAPTION_SINCE: std::sync::OnceLock<std::time::Instant> = std::sync::OnceLock::new();
 
 impl Meter {
     fn new() -> Self {
         let now = std::time::Instant::now();
+        CAPTION_SINCE.get_or_init(|| now);
         Meter {
             since: now,
             frames: 0,
             report_frames: 0,
             drawn: crate::draw::drawn(),
             logged: now,
-            caption: None,
         }
     }
 
@@ -3151,37 +3153,41 @@ impl Meter {
                 }
             }
         }
-        if self.caption.is_none() {
-            // The window's own text, read without a message.
-            let mut buffer = vec![0u16; 512];
-            // SAFETY: a window handle and a buffer of that length.
-            let n = unsafe { InternalGetWindowText(hwnd, &mut buffer) };
-            buffer.truncate(n.max(0) as usize);
-            self.caption = Some(buffer);
-        }
-        let Some(caption) = &self.caption else { return };
-        let text = format!(" | VIctory {fps:.0} fps {ms:.1} ms/frame {draws:.0} draws/frame");
-        let mut text: Vec<u16> = caption.iter().copied().chain(text.encode_utf16()).collect();
-        text.push(0);
+        // Crimson: "Crimson | 00:12:34 | 2 fps 452.1 ms/frame 1188 draws/frame",
+        // the time counted from when presenting to the window started (the
+        // window's own text, the title's, is not shown).
+        let stats = format!("{fps:.0} fps {ms:.1} ms/frame {draws:.0} draws/frame");
         // Setting the text waits for the window's thread (a title thread,
         // which may not pump for a while), so a thread of ours does it and
-        // presenting never waits; it takes the newest text when free.
-        static PENDING: Mutex<Option<(usize, Vec<u16>)>> = Mutex::new(None);
+        // presenting never waits. It writes the text again every second, so
+        // the time runs on while frames come seconds apart.
+        static PENDING: Mutex<Option<(usize, String)>> = Mutex::new(None);
         static SETTER: std::sync::Once = std::sync::Once::new();
-        *PENDING.lock().unwrap_or_else(|e| e.into_inner()) = Some((hwnd.0 as usize, text));
-        SETTER.call_once(|| {
+        *PENDING.lock().unwrap_or_else(|e| e.into_inner()) = Some((hwnd.0 as usize, stats));
+        let opened = *CAPTION_SINCE.get_or_init(std::time::Instant::now);
+        SETTER.call_once(move || {
             let _ = std::thread::Builder::new()
-                .name("victory-caption".into())
-                .spawn(|| {
+                .name("crimson-caption".into())
+                .spawn(move || {
+                    let mut current: Option<(usize, String)> = None;
+                    let mut shown = String::new();
                     loop {
-                        let next = PENDING.lock().unwrap_or_else(|e| e.into_inner()).take();
-                        match next {
-                            // SAFETY: a window handle and a NUL-terminated text.
-                            Some((hwnd, text)) => unsafe {
-                                let _ = SetWindowTextW(HWND(hwnd as *mut _), PCWSTR(text.as_ptr()));
-                            },
-                            None => std::thread::sleep(std::time::Duration::from_millis(100)),
+                        if let Some(next) = PENDING.lock().unwrap_or_else(|e| e.into_inner()).take() {
+                            current = Some(next);
                         }
+                        if let Some((hwnd, stats)) = &current {
+                            let up = opened.elapsed().as_secs();
+                            let text = format!("Crimson | {:02}:{:02}:{:02} | {stats}", up / 3600, up / 60 % 60, up % 60);
+                            if text != shown {
+                                let wide: Vec<u16> = text.encode_utf16().chain(std::iter::once(0)).collect();
+                                // SAFETY: a window handle and a NUL-terminated text.
+                                unsafe {
+                                    let _ = SetWindowTextW(HWND(*hwnd as *mut _), PCWSTR(wide.as_ptr()));
+                                }
+                                shown = text;
+                            }
+                        }
+                        std::thread::sleep(std::time::Duration::from_millis(250));
                     }
                 });
         });

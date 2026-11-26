@@ -2,3 +2,8 @@
 * text=auto eol=lf
 *.cmd text eol=crlf
 *.ps1 text eol=crlf
+
+# Crimson: its README and graphics are its own; an upstream merge keeps ours
+# (needs `git config merge.ours.driver true` once per clone).
+README.md merge=ours
+assets/readme/** merge=ours
