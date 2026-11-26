@@ -1261,6 +1261,14 @@ fn shared_texture(
             }
         }
     }
+    // The uses of the memory's other title textures can make this one a
+    // texture the host writes: `host_desc` saw only its own flags, and an
+    // R9G9B9E5 texture given unordered access here was refused by the host
+    // ("no host texture", 53 in a run of the prologue: the light and fog
+    // textures at 1280x720, 640x360 and the 40x23x64 volume, left black).
+    if d.format == R9G9B9E5 && d.flags & (1 | UNORDERED) != 0 {
+        d.format = R11G11B10_FLOAT;
+    }
     // shortcut: title textures of a replaced host texture keep it (placed
     // views move to the new one, `texture_at`); copies (`alias_source`)
     // bridge the two where the shapes allow.
