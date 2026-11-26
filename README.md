@@ -1,5 +1,5 @@
-﻿<p align="center">
-  <img src="assets/readme/banner-v2.svg" width="100%" alt="Crimson â€“ Xbox Series X|S games you own, on a mid-range PC, tuned for Series Sâ€“level performance. Built on VIctory; AMD RDNA2; 8 GB VRAM; no CPU emulation.">
+<p align="center">
+  <img src="assets/readme/banner-v2.svg" width="100%" alt="Crimson – Xbox Series X|S games you own, on a mid-range PC, tuned for Series S–level performance. Built on VIctory; AMD RDNA2; 8 GB VRAM; no CPU emulation.">
 </p>
 
 <p align="center">
@@ -13,26 +13,26 @@
 </p>
 
 <p align="center">
-  <b><a href="#status">Status</a></b> Â·
-  <b><a href="#highlights">Highlights</a></b> Â·
-  <b><a href="#how-it-works">How it works</a></b> Â·
-  <b><a href="#quick-start">Quick start</a></b> Â·
-  <b><a href="#settings">Settings</a></b> Â·
-  <b><a href="#what-crimson-changes">What Crimson changes</a></b> Â·
-  <b><a href="#known-issues">Known issues</a></b> Â·
-  <b><a href="#upstream-and-credits">Credits</a></b> Â·
+  <b><a href="#status">Status</a></b> ·
+  <b><a href="#highlights">Highlights</a></b> ·
+  <b><a href="#how-it-works">How it works</a></b> ·
+  <b><a href="#quick-start">Quick start</a></b> ·
+  <b><a href="#settings">Settings</a></b> ·
+  <b><a href="#what-crimson-changes">What Crimson changes</a></b> ·
+  <b><a href="#known-issues">Known issues</a></b> ·
+  <b><a href="#upstream-and-credits">Credits</a></b> ·
   <b><a href="https://discord.gg/bbdTtcVKnR">Discord</a></b>
 </p>
 
 # Crimson
 
-Crimson is a fork of [VIctory](https://github.com/Marvisak/VIctory), an Xbox Series X|S â†’ Windows compatibility layer. VIctory does the hard part: the game's x64 code runs natively, the console platform is reimplemented, and the console's RDNA2 shaders are recompiled to DXIL. Crimson builds on that with one goal: **Series X|S games you own, running at roughly Series Sâ€“level performance on comparable PC hardware** â€“ an 8 GB RDNA2 card, a 6-core CPU and 32 GB of RAM.
+Crimson is a fork of [VIctory](https://github.com/Marvisak/VIctory), an Xbox Series X|S → Windows compatibility layer. VIctory does the hard part: the game's x64 code runs natively, the console platform is reimplemented, and the console's RDNA2 shaders are recompiled to DXIL. Crimson builds on that with one goal: **Series X|S games you own, running at roughly Series S–level performance on comparable PC hardware** – an 8 GB RDNA2 card, a 6-core CPU and 32 GB of RAM.
 
 > [!IMPORTANT]
 > Crimson works only on game files you already own. It does not download, decrypt or unpack game packages and contains nothing for circumventing DRM. Like VIctory, the repository holds nothing from any game: no assets, shaders, code or data ([asset policy](docs/asset-policy.md)).
 
 > [!WARNING]
-> Crimson is early and experimental. There are no releases yet and nothing is playable yet. Progress is posted as it lands â€“ follow along on [Discord](https://discord.gg/bbdTtcVKnR).
+> Crimson is early and experimental. There are no releases yet and nothing is playable yet. Progress is posted as it lands – follow along on [Discord](https://discord.gg/bbdTtcVKnR).
 
 > [!NOTE]
 > Crimson was built on [XCL](https://github.com/xcl-dev/xcl) until November 2026. On the test system VIctory got further in a few hours than three days of work on XCL, so Crimson moved. The XCL-based work is kept on the [`xcl-legacy`](https://github.com/WarmMilkCodes/crimson-layer/tree/xcl-legacy) branch.
@@ -47,13 +47,13 @@ Crimson is a fork of [VIctory](https://github.com/Marvisak/VIctory), an Xbox Ser
 
 | Stage | State | Notes |
 |---|---|---|
-| Boots, menus | âœ… | steady 30 fps |
-| Loads the story | âœ… | about 5 minutes on first run |
-| Renders the world | âœ… | Series S mode: picture and sound, about 2 fps |
-| Stays up | ðŸš§ | the GPU is lost after about 5 minutes in the world (being worked on) |
-| Playable | âŒ | â€“ |
+| Boots, menus | ✅ | steady 30 fps |
+| Loads the story | ✅ | about 5 minutes on first run |
+| Renders the world | ✅ | Series S mode: picture and sound, about 2 fps |
+| Stays up | 🚧 | the GPU is lost after about 5 minutes in the world (being worked on) |
+| Playable | ❌ | – |
 
-<sub>Test system: AMD Radeon RX 6600 XT 8 GB Â· Ryzen 5 5500 Â· 32 GB DDR4 Â· Windows 11 23H2 (build 22631).</sub>
+<sub>Test system: AMD Radeon RX 6600 XT 8 GB · Ryzen 5 5500 · 32 GB DDR4 · Windows 11 23H2 (build 22631).</sub>
 
 ## Highlights
 
@@ -61,29 +61,29 @@ Crimson is a fork of [VIctory](https://github.com/Marvisak/VIctory), an Xbox Ser
   <tr>
     <td width="33%" valign="top" align="center">
       <img src="assets/readme/icon-gauge.svg" width="56" alt=""><br>
-      <p align="left"><b>Series S as the target</b> â€“ tuned and tested on the PC hardware closest to a Series S, not a top-end GPU.</p>
+      <p align="left"><b>Series S as the target</b> – tuned and tested on the PC hardware closest to a Series S, not a top-end GPU.</p>
     </td>
     <td width="33%" valign="top" align="center">
       <img src="assets/readme/icon-memory.svg" width="56" alt=""><br>
-      <p align="left"><b>A card budget for 8 GB</b> â€“ textures are given up earlier, so the world fits on a card a third the size of the one VIctory is tuned on.</p>
+      <p align="left"><b>A card budget for 8 GB</b> – textures are given up earlier, so the world fits on a card a third the size of the one VIctory is tuned on.</p>
     </td>
     <td width="33%" valign="top" align="center">
       <img src="assets/readme/icon-texture.svg" width="56" alt=""><br>
-      <p align="left"><b>Format fixes</b> â€“ texture casts and HDR targets that removed the GPU on Windows 11 23H2 with an RDNA2 card are made safely.</p>
+      <p align="left"><b>Format fixes</b> – texture casts and HDR targets that removed the GPU on Windows 11 23H2 with an RDNA2 card are made safely.</p>
     </td>
   </tr>
   <tr>
     <td width="33%" valign="top" align="center">
       <img src="assets/readme/icon-shield.svg" width="56" alt=""><br>
-      <p align="left"><b>Measured, not guessed</b> â€“ each change comes from a crash pinned in VIctory's logs, the D3D12 debug layer or Windows' own counters.</p>
+      <p align="left"><b>Measured, not guessed</b> – each change comes from a crash pinned in VIctory's logs, the D3D12 debug layer or Windows' own counters.</p>
     </td>
     <td width="33%" valign="top" align="center">
       <img src="assets/readme/icon-test.svg" width="56" alt=""><br>
-      <p align="left"><b>Tested on real mid-range hardware</b> â€“ every change is run on an RX 6600 XT with 32 GB of RAM before it lands.</p>
+      <p align="left"><b>Tested on real mid-range hardware</b> – every change is run on an RX 6600 XT with 32 GB of RAM before it lands.</p>
     </td>
     <td width="33%" valign="top" align="center">
       <img src="assets/readme/icon-upstream.svg" width="56" alt=""><br>
-      <p align="left"><b>Tracks upstream VIctory</b> â€“ kept in sync with VIctory's main branch; general fixes are offered back upstream.</p>
+      <p align="left"><b>Tracks upstream VIctory</b> – kept in sync with VIctory's main branch; general fixes are offered back upstream.</p>
     </td>
   </tr>
 </table>
@@ -111,7 +111,7 @@ Crimson is VIctory plus a set of changes for mid-range hardware. Everything VIct
    cargo build --release -p victory
    ```
 
-2. **Point it at your game.** Copy `victory.example.toml` to `victory.toml` and set the paths â€“ all outside the repository:
+2. **Point it at your game.** Copy `victory.example.toml` to `victory.toml` and set the paths – all outside the repository:
 
    ```toml
    [paths]
@@ -151,8 +151,8 @@ For an 8 GB RDNA2 card:
 <details>
 <summary><b>Windows settings that matter</b></summary>
 
-- **Page file:** a world run commits about 35 GB. With 32 GB of RAM, set a fixed page file of about 48 GB on a roomy drive (System Properties â†’ Advanced â†’ Performance â†’ Virtual memory).
-- **Close other apps** before a run â€“ free RAM goes fast once the world loads.
+- **Page file:** a world run commits about 35 GB. With 32 GB of RAM, set a fixed page file of about 48 GB on a roomy drive (System Properties → Advanced → Performance → Virtual memory).
+- **Close other apps** before a run – free RAM goes fast once the world loads.
 
 </details>
 
@@ -161,7 +161,7 @@ For an 8 GB RDNA2 card:
 ## What Crimson changes
 
 <details>
-<summary><b>Stability</b> â€“ GPU losses at world start</summary>
+<summary><b>Stability</b> – GPU losses at world start</summary>
 
 | Change | Why |
 |---|---|
@@ -172,7 +172,7 @@ For an 8 GB RDNA2 card:
 </details>
 
 <details>
-<summary><b>Memory</b> â€“ fitting an 8 GB card</summary>
+<summary><b>Memory</b> – fitting an 8 GB card</summary>
 
 | Change | Why |
 |---|---|
@@ -185,7 +185,7 @@ For an 8 GB RDNA2 card:
 <summary><b>Planned</b></summary>
 
 - Find the cause of the GPU loss after about 5 minutes in the world (the card stays under budget; GPU memory kept in system RAM is the lead).
-- Cut how much game memory is copied for the GPU each frame â€“ the main cost behind 2 fps.
+- Cut how much game memory is copied for the GPU each frame – the main cost behind 2 fps.
 - Scale the card budget marks to the card's size by default.
 - Make Series S mode and the PC upscaler the defaults on 8 GB cards.
 
