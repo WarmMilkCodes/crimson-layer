@@ -1355,7 +1355,7 @@ pub(crate) const R9G9B9E5: u32 = 67;
 /// formats of different families get a host texture each, as where the
 /// host refuses the list.
 #[cfg(windows)]
-fn format_lists() -> bool {
+pub(crate) fn format_lists() -> bool {
     use windows::Win32::Graphics::Direct3D12::*;
     static KNOWN: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
     *KNOWN.get_or_init(|| {

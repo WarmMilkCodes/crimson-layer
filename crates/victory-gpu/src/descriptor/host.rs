@@ -1403,10 +1403,12 @@ fn fits(texture: &ID3D12Resource, castable: &[u32], mut format: Option<&mut DXGI
     let cast = castable.contains(&view);
     // An R9G9B9E5 view of a texture in another format removed the device
     // when made on a host that had taken the texture's format list (an
-    // RX 6600 XT, see `resource::format_lists`): whatever the list says,
-    // the slot stays null and reads zero.
-    // shortcut: what the view would read is lost.
-    if view == crate::resource::R9G9B9E5 && own != view {
+    // RX 6600 XT under Windows 10.0.22631, see `resource::format_lists`):
+    // where lists are not used, the slot stays null and reads zero. Where
+    // they are (Windows 11 24H2 on), the view is made as the list allows:
+    // it is how the title reads the light it packs into R32_UINT textures.
+    // shortcut: without lists, what the view would read is lost.
+    if view == crate::resource::R9G9B9E5 && own != view && !crate::resource::format_lists() {
         once!(view, own, "an R9G9B9E5 view of a texture in another format: left null");
         return false;
     }
