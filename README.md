@@ -42,16 +42,17 @@ Crimson is a fork of [VIctory](https://github.com/Marvisak/VIctory), an Xbox Ser
 ## Status
 
 <p align="center">
-  <img src="assets/readme/status-v2.svg" width="100%" alt="A newer retail game on an RX 6600 XT in Series S mode: boots, plays its menus at 30 fps, loads the story and renders the world with picture and sound at about 2 fps; the GPU is lost after about five minutes in the world.">
+  <img src="assets/readme/status-v2.svg" width="100%" alt="A newer retail game on an RX 6600 XT in Series S mode: boots, plays its menus at 30 fps, loads the story, and the prologue can be played at 2 to 5 fps; runs of more than 15 minutes in the world end without a crash.">
 </p>
 
 | Stage | State | Notes |
 |---|---|---|
 | Boots, menus | ✅ | steady 30 fps |
 | Loads the story | ✅ | about 5 minutes on first run |
-| Renders the world | ✅ | Series S mode: picture and sound, about 2 fps |
-| Stays up | 🚧 | the GPU is lost after about 5 minutes in the world (being worked on) |
-| Playable | ❌ | – |
+| Renders the world | ✅ | Series S mode: picture and sound |
+| Stays up | ✅ | runs of more than 15 minutes in the world, no crash |
+| Prologue playable | 🚧 | 3–5 fps in light scenes, 1.5–3 fps in busy ones; lighting and texture streaming incomplete |
+| Playable at 30 fps | ❌ | – |
 
 <sub>Test system: AMD Radeon RX 6600 XT 8 GB · Ryzen 5 5500 · 32 GB DDR4 · Windows 11 23H2 (build 22631).</sub>
 
@@ -65,7 +66,7 @@ Crimson is a fork of [VIctory](https://github.com/Marvisak/VIctory), an Xbox Ser
     </td>
     <td width="33%" valign="top" align="center">
       <img src="assets/readme/icon-memory.svg" width="56" alt=""><br>
-      <p align="left"><b>A card budget for 8 GB</b> – textures are given up earlier, so the world fits on a card a third the size of the one VIctory is tuned on.</p>
+      <p align="left"><b>Built for 8 GB</b> – command memory and texture budgets fit a card a third the size of the one VIctory is tuned on, without the GPU being lost.</p>
     </td>
     <td width="33%" valign="top" align="center">
       <img src="assets/readme/icon-texture.svg" width="56" alt=""><br>
@@ -131,11 +132,10 @@ Crimson is VIctory plus a set of changes for mid-range hardware. Everything VIct
 
    ```powershell
    $env:VICTORY_FIDELITYFX_DIR = 'D:\fidelityfx\FidelityFX-SDK-2.4.0\Kits\FidelityFX\signedbin'
-   $env:VICTORY_CARD_MARKS = '70,60'
    C:\vt\release\crimson.exe run D:\Game\<the game's exe> --execute --console series-s
    ```
 
-   Press A (or Enter) on each first-boot screen and on the account picker. The game folder is never modified. The window's title shows the time since the window opened, the frame rate, the time per frame and the draws per frame.
+   Press A (or Enter) on each first-boot screen and on the account picker. The game folder is never modified. The window's title shows the time since the window opened, the time since the world started, the frame rate, the time per frame and the draws per frame.
 
 ## Settings
 
@@ -144,7 +144,9 @@ For an 8 GB RDNA2 card:
 | Variable | Recommended | What it does |
 |---|---|---|
 | `VICTORY_FIDELITYFX_DIR` | the SDK's `signedbin` folder | runs AMD's PC upscaler in Series S mode (the console one does not work yet) |
-| `VICTORY_CARD_MARKS` | `70,60` | gives textures up past 70 % of the card's budget, down to 60 % (default `90,85`) |
+| `VICTORY_CARD_MARKS` | unset | gives textures up past the first share of the card's budget, down to the second (default `90,85`); lower values free memory but make textures load again |
+| `VICTORY_BVH_BUILDER` | unset | `1` runs the console's ray-tracing structure builder (off by default: costly, and unsafe while any of its stages is missing) |
+| `VICTORY_SHADER_OPT` | unset | `0` turns off the clean-up passes over translated shaders (part of the shader cache's key: translate again after changing it) |
 | `VICTORY_FORMAT_LISTS` | unset | `1` forces texture format lists on, `0` off (default: on from Windows 11 24H2) |
 | `VICTORY_D3D12_DEBUG` | unset | `1` with a `--features diagnostics` build: the D3D12 debug layer names invalid calls |
 
@@ -161,39 +163,54 @@ For an 8 GB RDNA2 card:
 ## What Crimson changes
 
 <details>
-<summary><b>Stability</b> – GPU losses at world start</summary>
+<summary><b>Stability</b> – GPU losses and game crashes</summary>
 
 | Change | Why |
 |---|---|
+| **State preludes from a shared pool** | VIctory gave every command list a second command allocator. On an AMD driver each one that has recorded keeps a megabyte of command memory in a 2 GB pool; after a few minutes in the world the pool was full and Windows removed the device ("failed to page in required resource" in a GPU trace). Preludes are now taken from a pool as large as one submission needs. |
+| **Ray-tracing structure builder off** (`VICTORY_BVH_BUILDER`) | The builder's stages feed each other through memory. With a stage missing, the others compute where to write from garbage and write into the game's own objects; the game then crashed on pointers made of empty bounding boxes. Off by default; it also frees CPU time each frame. |
 | **No texture format lists before Windows 11 24H2** | On build 22631 with an RX 6600 XT, the system reports format-list casting, accepts the lists, then removes the device when a view casts across format families. Without lists, VIctory makes a texture per format, bridged by a copy. `VICTORY_FORMAT_LISTS` overrides. |
-| **R9G9B9E5 views of other formats left null** | A safety net for the cast above, if lists are forced on. |
+| **R9G9B9E5 views of other formats left null without lists** | A safety net for the cast above; where lists are used (24H2 on), the views are made. |
 | **R9G9B9E5 render targets made as R11G11B10_FLOAT** | The PC can't draw into the packed HDR format the console uses for its 1080p picture in Series S mode, so the texture was never created and the upscaler had no target. Same size per pixel, three float channels. |
+| **Crash reports name recent writes** | A game crash's report says whether its registers point into memory the layer wrote shortly before. |
 
 </details>
 
 <details>
-<summary><b>Memory</b> – fitting an 8 GB card</summary>
+<summary><b>Rendering</b></summary>
 
 | Change | Why |
 |---|---|
-| **Adjustable card budget marks** (`VICTORY_CARD_MARKS`) | VIctory gives textures up at 90 % of the card's budget. On 8 GB the world filled the card within two minutes; at `70,60` it holds at about 75 %. |
-| **Budget logging** | Each pass logs what the budget asked for and what could be given up. |
+| **A host texture per format family without lists** | The game packs light into integer textures and reads them back as packed HDR. Without format lists, the two kept replacing each other as the memory's texture and the HDR one was refused, so the sky and bounced light came out black. Each now keeps its own texture, bridged by a copy. |
+
+</details>
+
+<details>
+<summary><b>Performance and memory</b></summary>
+
+| Change | Why |
+|---|---|
+| **Clean-up passes over translated shaders** (`VICTORY_SHADER_OPT`) | Dead code, constant folding, repeated reads merged, from [VIctory-7900XTX](https://github.com/avatarmanz/VIctory-7900XTX). No measurable GPU gain on the test card (the driver's compiler does much of it), kept because it makes smaller shaders. |
+| **Adjustable card budget marks** (`VICTORY_CARD_MARKS`) | The share of the card at which textures are given up. Low marks were tried on 8 GB and made textures load again in bursts; the default is used now. |
+| **World timer** | The window's title also shows the time since the world started. |
 
 </details>
 
 <details>
 <summary><b>Planned</b></summary>
 
-- Find the cause of the GPU loss after about 5 minutes in the world (the card stays under budget; GPU memory kept in system RAM is the lead).
-- Cut how much game memory is copied for the GPU each frame – the main cost behind 2 fps.
-- Scale the card budget marks to the card's size by default.
+- Light the world fully: the sky and indirect light are still dark in many scenes.
+- Faster texture streaming: detailed models and textures arrive late, so stand-ins show for a while.
+- Frame rate: about half of each frame is CPU work preparing and copying game memory for the GPU, the other half GPU time.
 - Make Series S mode and the PC upscaler the defaults on 8 GB cards.
 
 </details>
 
 ## Known issues
 
-- **About 2 fps in the world**, and the GPU is lost after about 5 minutes there.
+- **2–5 fps in the world**; 30 fps is not in reach on an RX 6600 XT yet.
+- **Lighting:** the sky and indirect light are dark in many scenes, and ray-traced lighting is off.
+- **Streaming:** detailed models and textures arrive late; low-detail stand-ins show first.
 - **Series S mode needs the PC upscaler** (`VICTORY_FIDELITYFX_DIR`); with the console's own upscaler the GPU is lost when the world starts.
 - **Series X mode on 8 GB cards** loses the GPU within seconds of the world starting.
 - **First launch is long**: translate the shaders first; the driver also builds pipelines during the first runs.
@@ -204,7 +221,7 @@ Questions, test results and progress updates: **[join the Crimson Discord](https
 
 ## Upstream and credits
 
-Crimson exists because of [VIctory](https://github.com/Marvisak/VIctory) by Marvisak and its contributors. It follows VIctory's main branch; fixes that help everyone are offered back upstream, and problems that also happen on plain VIctory belong in [VIctory's issues](https://github.com/Marvisak/VIctory/issues). The forks around VIctory were useful as references while testing; no code from them is included. What Crimson changed, and when, is listed in [NOTICE.md](NOTICE.md).
+Crimson exists because of [VIctory](https://github.com/Marvisak/VIctory) by Marvisak and its contributors. It follows VIctory's main branch; fixes that help everyone are offered back upstream, and problems that also happen on plain VIctory belong in [VIctory's issues](https://github.com/Marvisak/VIctory/issues). The forks around VIctory were useful as references while testing. The shader clean-up passes (`crates/victory-shader/src/emit/bitcode/opt.rs`) come from [VIctory-7900XTX](https://github.com/avatarmanz/VIctory-7900XTX), after [fxceless/victory-fork](https://github.com/fxceless/victory-fork), under the same license. What Crimson changed, and when, is listed in [NOTICE.md](NOTICE.md).
 
 Earlier versions of Crimson were built on [XCL](https://github.com/xcl-dev/xcl); thanks to its contributors too.
 
