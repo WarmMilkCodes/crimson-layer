@@ -1175,6 +1175,32 @@ pub(crate) struct MemoryKey {
     swizzle: u32,
     element: (u64, u64),
     depth: bool,
+    /// The format's family, where the host casts between none
+    /// ([`split_family`]); 0 where it does.
+    family: u32,
+}
+
+/// The part of a texture memory's key that keeps formats of different
+/// families apart: the family of `format` on a host without format lists
+/// (`format_lists`), 0 otherwise.
+///
+/// Without lists a host texture is viewed in formats of its own family
+/// only, so title textures of one memory in two families cannot share one.
+/// With one key for both, each replaced the other as the memory's texture:
+/// the title packs light as R9G9B9E5 into R32_UINT textures with compute
+/// shaders and samples them as R9G9B9E5 (the sky, the probes, the bounced
+/// light), and the R9G9B9E5 one, given the R32_UINT one's unordered access,
+/// was refused by the host ("no host texture", 51 to 53 in a run of the
+/// prologue; the light it should have shown was black). With a key each,
+/// both keep a host texture of their own and what the GPU wrote to one is
+/// copied over before the other is read ([`alias_source`]).
+fn split_family(format: u32) -> u32 {
+    #[cfg(windows)]
+    if crate::host::host().is_some() && !format_lists() {
+        return family(pc_format(format));
+    }
+    let _ = format;
+    0
 }
 
 /// The texture memory `desc` describes at `address`; `None` for buffers
@@ -1194,6 +1220,7 @@ pub(crate) fn memory_key(address: u64, desc: &ResourceDesc) -> Option<MemoryKey>
         swizzle: texture_layout(desc).map_or(desc.layout, |t| t.planes[0].layout.desc.swizzle.0),
         element: element(desc.format)?,
         depth: desc.flags & DEPTH != 0,
+        family: split_family(desc.format),
     })
 }
 
@@ -1261,11 +1288,8 @@ fn shared_texture(
             }
         }
     }
-    // The uses of the memory's other title textures can make this one a
-    // texture the host writes: `host_desc` saw only its own flags, and an
-    // R9G9B9E5 texture given unordered access here was refused by the host
-    // ("no host texture", 53 in a run of the prologue: the light and fog
-    // textures at 1280x720, 640x360 and the 40x23x64 volume, left black).
+    // The uses of the memory's other R9G9B9E5 title textures can make this
+    // one a texture the host writes (`host_desc` saw only its own flags).
     if d.format == R9G9B9E5 && d.flags & (1 | UNORDERED) != 0 {
         d.format = R11G11B10_FLOAT;
     }
@@ -1299,6 +1323,8 @@ fn takes(t: &HostTexture, d: &ResourceDesc) -> bool {
     let (flags, own) = (td.Flags.0 as u32, td.Format.0 as u32);
     d.flags & USES & !flags == 0
         && (family(d.format) == family(own)
+            // (an R9G9B9E5 texture the title writes, `host_desc`)
+            || (own == R11G11B10_FLOAT && d.format == R9G9B9E5)
             || t.castable.iter().any(|&c| family(c) == family(d.format)))
 }
 
